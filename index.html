@@ -912,6 +912,2491 @@ async function removeFromGroup(studentId, groupId){
 function scheduleShortLabel(schedule){
   return (schedule||[]).map(x=>`${DAY_NAMES[x.day-1]} ${x.time}`).join(', ') || '—';
 }
+function studentCardHtml(s, isAdmin){
+  const grouped = isGrouped(s);
+  const g = grouped ? getGroup(s.group_id) : null;
+  return `<div class="card">
+      <span class="tag">${grouped ? '👥 '+escapeHtml(g?.name||'Группа') : escapeHtml(s.channel||'')}</span>
+      <h3>${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</h3>
+      <div class="meta">Д.р. ${s.birth_date?dayjs(s.birth_date).format('DD.MM.YYYY'):'—'} · ${grouped ? (g?.duration||'—') : (s.duration||'—')} мин/занятие ${s.grade?`· ${s.grade} класс`:''} ${s.exam_oge?' · ОГЭ':''}${s.exam_ege?' · ЕГЭ':''}</div>
+      <div class="row"><span>Расписание</span><span>${scheduleShortLabel(grouped ? g?.schedule : s.schedule)}</span></div>
+      ${isAdmin ? `<div class="row"><span>Цена занятия (этого ученика)</span><span>${fmtMoney(s.price)}</span></div>
+      ${grouped ? `<div class="row"><span>Ставка преп. за группу</span><span>${fmtMoney(g?.teacher_rate)}</span></div>` : `<div class="row"><span>Ставка преподавателя</span><span>${fmtMoney(s.teacher_rate)}</span></div>`}` : ''}
+      <div class="actions">
+        <button class="btn sm" onclick="openStudentModal('${s.id}')">Открыть карточку</button>
+        <button class="btn sm ghost" onclick="openReportModal('${s.id}')">+ Комментарий за месяц</button>
+        <button class="btn sm butter" onclick="openParentReportModal('${s.id}')">📄 Отчёт родителю</button>
+        ${grouped ? `<button class="btn sm ghost" onclick="openGroupModal('${g?.id}')">👥 Открыть группу</button>` : ''}
+        ${(s.exam_oge||s.exam_ege) ? `<button class="btn sm ghost" onclick="openMockExamsModal('${s.id}')">📊 Пробники</button>` : ''}
+      </div>
+    </div>`;
+}
+function renderStudents(){
+  document.getElementById('addStudentBtn').style.display = session.role==='admin' ? 'inline-flex' : 'none';
+  const list = visibleStudents();
+  const grid = document.getElementById('studentsGrid');
+  if(list.length===0){
+    grid.innerHTML = `<div class="empty-state"><div class="glyph">🎓</div>Учеников пока нет.</div>`;
+    return;
+  }
+  const isAdmin = session.role==='admin';
+  if(!isAdmin){
+    grid.innerHTML = list.map(s=>studentCardHtml(s, isAdmin)).join('');
+    return;
+  }
+  // администратор: карточки сгруппированы по преподавателям
+  let html = '';
+  cache.teachers.forEach(t=>{
+    const own = list.filter(s=>s.teacher_id===t.id);
+    if(!own.length) return;
+    html += `<div style="grid-column:1/-1;margin:${html?'18px':'0'} 0 2px;">
+      <h3 style="margin-bottom:2px;">${escapeHtml(t.last_name)} ${escapeHtml(t.first_name)}</h3>
+    </div>`;
+    html += own.map(s=>studentCardHtml(s, isAdmin)).join('');
+  });
+  const unassigned = list.filter(s=>!s.teacher_id);
+  if(unassigned.length){
+    html += `<div style="grid-column:1/-1;margin:${html?'18px':'0'} 0 2px;"><h3 style="margin-bottom:2px;color:var(--ink-light);">Без преподавателя</h3></div>`;
+    html += unassigned.map(s=>studentCardHtml(s, isAdmin)).join('');
+  }
+  grid.innerHTML = html;
+}
+
+function studentFormHtml(s, isAdmin){
+  const grouped = isGrouped(s);
+  const teacherGroups = groupsOfTeacher(s.teacher_id||'');
+  return `
+    <h3>Основные данные</h3>
+    <div class="form-grid">
+      <div class="field"><label>Фамилия</label><input id="sLastName" value="${escapeHtml(s.last_name)}" ${isAdmin?'':'disabled'}></div>
+      <div class="field"><label>Имя</label><input id="sFirstName" value="${escapeHtml(s.first_name)}" ${isAdmin?'':'disabled'}></div>
+      <div class="field"><label>Дата рождения</label><input type="date" id="sBirth" value="${s.birth_date||''}" ${isAdmin?'':'disabled'}></div>
+      <div class="field"><label>Телефон</label><input id="sPhone" value="${escapeHtml(s.phone)}" ${isAdmin?'':'disabled'}></div>
+      <div class="field"><label>Канал связи</label><select id="sChannel" ${isAdmin?'':'disabled'}>${CHANNELS.map(c=>`<option ${s.channel===c?'selected':''}>${c}</option>`).join('')}</select></div>
+      <div class="field"><label>Тип занятий</label>
+        <select id="sMode" ${isAdmin?'':'disabled'} onchange="toggleStudentMode()">
+          <option value="individual" ${!grouped?'selected':''}>Индивидуально</option>
+          <option value="group" ${grouped?'selected':''}>В группе</option>
+        </select>
+      </div>
+      <div class="field"><label>Класс</label>
+        <select id="sGrade">${Array.from({length:11},(_,i)=>i+1).map(n=>`<option value="${n}" ${s.grade==n?'selected':''}>${n} класс</option>`).join('')}</select>
+      </div>
+      <div class="field">
+        <label>Экзамен</label>
+        <div style="display:flex;gap:14px;padding-top:9px;">
+          <label style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;color:var(--ink);"><input type="checkbox" id="sExamOge" ${s.exam_oge?'checked':''} onchange="toggleExamSections('${s.id||''}')" style="width:16px;height:16px;"> ОГЭ</label>
+          <label style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;color:var(--ink);"><input type="checkbox" id="sExamEge" ${s.exam_ege?'checked':''} onchange="toggleExamSections('${s.id||''}')" style="width:16px;height:16px;"> ЕГЭ</label>
+        </div>
+      </div>
+    </div>
+
+    <div id="groupSelectBlock" style="display:${grouped?'block':'none'};margin-top:10px;">
+      <div class="field"><label>Группа</label>
+        <select id="sGroupId" ${isAdmin?'':'disabled'}>${teacherGroups.map(g=>`<option value="${g.id}" ${s.group_id===g.id?'selected':''}>${escapeHtml(g.name)}</option>`).join('') || '<option value="">У преподавателя пока нет групп — создайте её на вкладке «Преподаватели»</option>'}</select>
+      </div>
+      <p style="color:var(--ink-light);font-size:12px;">Длительность, расписание и статусы занятий берутся из карточки группы. У ученика в группе — своя цена занятия (ниже).</p>
+    </div>
+
+    <div id="individualScheduleBlock" style="display:${grouped?'none':'block'};">
+      <div class="field" style="margin-top:10px;"><label>Длительность занятия</label>
+        <select id="sDuration">
+          ${[30,45,60,90].map(m=>`<option value="${m}" ${s.duration==m?'selected':''}>${m} минут</option>`).join('')}
+        </select>
+      </div>
+      <h3 style="margin-top:16px;">Расписание занятий</h3>
+      <div id="scheduleRows">
+        ${(s.schedule&&s.schedule.length?s.schedule:[{day:1,time:'16:00'}]).map(sc=>scheduleRowHtml(sc, true)).join('')}
+      </div>
+      <button class="btn sm ghost" type="button" onclick="addScheduleRow('scheduleRows')">+ Добавить занятие</button>
+    </div>
+
+    ${isAdmin?`<h3 style="margin-top:16px;">Оплата и ссылки</h3>
+    <div class="form-grid">
+      <div class="field"><label>Цена занятия для этого ученика (₽)</label><input type="number" id="sPrice" value="${s.price||0}"></div>
+      <div class="field" id="teacherRateFieldWrap" style="display:${grouped?'none':'block'};"><label>Ставка преподавателя за занятие (₽)</label><input type="number" id="sTeacherRate" value="${s.teacher_rate||0}"></div>
+      <div class="field"><label>Преподаватель</label><select id="sTeacherId" onchange="onStudentTeacherChange()">${cache.teachers.map(t=>`<option value="${t.id}" ${s.teacher_id===t.id?'selected':''}>${escapeHtml(t.last_name)} ${escapeHtml(t.first_name)}</option>`).join('')}</select></div>
+      <div class="field"><label>Ссылка на Контур Толк</label><input id="sKontur" value="${escapeHtml(s.kontur_link||'')}"></div>
+      <div class="field full"><label>ProgressMe (ID / данные)</label><input id="sProgressMe" value="${escapeHtml(s.progress_me||'')}"></div>
+    </div>
+
+    <h3 style="margin-top:16px;">Родитель</h3>
+    <div class="form-grid">
+      <div class="field"><label>Имя родителя</label><input id="sParentName" value="${escapeHtml(s.parent_name||'')}"></div>
+      <div class="field"><label>Телефон родителя</label><input id="sParentPhone" value="${escapeHtml(s.parent_phone||'')}"></div>
+      <div class="field full"><label>Канал связи с родителем</label><select id="sParentChannel">${CHANNELS.map(c=>`<option ${s.parent_channel===c?'selected':''}>${c}</option>`).join('')}</select></div>
+    </div>` : `
+    <div class="field full" style="margin-top:16px;"><label>Ссылка на Контур Толк</label><input value="${escapeHtml(s.kontur_link||'')}" disabled></div>
+    `}
+
+    <h3 style="margin-top:16px;">Цели и программа на 2026–2027 (индивидуальные)</h3>
+    <div class="field full"><textarea id="sGoals" rows="3">${escapeHtml(s.goals||'')}</textarea></div>
+
+    ${isAdmin ? `<h3 style="margin-top:16px;">Отметки об оплате</h3>
+    <ul class="subtle-list" id="paymentsList"><li>Загрузка…</li></ul>
+    <div class="form-grid" style="margin-top:8px;">
+      <div class="field"><label>Дата оплаты</label><input type="date" id="payDate" value="${dayjs().format('YYYY-MM-DD')}"></div>
+      <div class="field"><label>Сумма (₽)</label><input type="number" id="payAmount" value="${(s.price||0)*4}"></div>
+      <div class="field"><label>Количество оплаченных занятий</label><input type="number" id="payCount" value="4" onchange="document.getElementById('payAmount').value=(this.value||0)*${s.price||0}"></div>
+      <div class="field"><label>Карта / банк поступления</label>
+        <select id="payBank" onchange="togglePayBankOther()">
+          <option>Т-Банк</option><option>Сбербанк</option><option>Яндекс Банк</option><option>Наличные</option><option value="other">Другое (указать)</option>
+        </select>
+      </div>
+      <div class="field full" id="payBankOtherWrap" style="display:none;"><label>Укажите банк</label><input id="payBankOther" placeholder="Название банка"></div>
+      <div class="field"><label>Период оплаты — с</label><input type="date" id="payPeriodFrom" value="${dayjs().startOf('month').format('YYYY-MM-DD')}"></div>
+      <div class="field"><label>Период оплаты — по</label><input type="date" id="payPeriodTo" value="${dayjs().endOf('month').format('YYYY-MM-DD')}"></div>
+    </div>
+    <button class="btn sm accent" style="margin-top:8px;" onclick="addPayment('${s.id}')">+ Добавить оплату</button>` : ''}
+
+    <h3 style="margin-top:16px;">Комментарии по месяцам (для этого ученика)</h3>
+    <ul class="subtle-list" id="reportsList"><li>Загрузка…</li></ul>
+
+    <h3 style="margin-top:16px;">Пробники</h3>
+    ${s.id ? `
+      <p id="mockExamsNone" style="display:${(s.exam_oge||s.exam_ege)?'none':'block'};color:var(--ink-light);font-size:12.5px;">Отметьте выше «ОГЭ» или «ЕГЭ», чтобы добавлять пробники.</p>
+      <button class="btn sm butter" id="openMockExamsBtn" style="display:${(s.exam_oge||s.exam_ege)?'inline-flex':'none'};" onclick="openMockExamsModal('${s.id}')">📊 Открыть пробники (добавить результаты / отчёт)</button>
+    ` : `<p style="color:var(--ink-light);font-size:12.5px;">Сначала сохраните ученика, затем отметьте ОГЭ/ЕГЭ и добавьте пробники.</p>`}
+  `;
+}
+function toggleExamSections(studentId){
+  const oge = document.getElementById('sExamOge')?.checked;
+  const ege = document.getElementById('sExamEge')?.checked;
+  const btn = document.getElementById('openMockExamsBtn');
+  const none = document.getElementById('mockExamsNone');
+  if(btn) btn.style.display = (oge||ege) ? 'inline-flex':'none';
+  if(none) none.style.display = (oge||ege)?'none':'block';
+}
+function toggleStudentMode(){
+  const grouped = document.getElementById('sMode').value==='group';
+  document.getElementById('groupSelectBlock').style.display = grouped?'block':'none';
+  document.getElementById('individualScheduleBlock').style.display = grouped?'none':'block';
+  const rateWrap = document.getElementById('teacherRateFieldWrap');
+  if(rateWrap) rateWrap.style.display = grouped?'none':'block';
+}
+function onStudentTeacherChange(){
+  // при смене преподавателя список групп для выбора нужно перезагрузить — проще переоткрыть форму по месту
+  const sel = document.getElementById('sTeacherId');
+  const teacherGroups = groupsOfTeacher(sel.value);
+  const gSel = document.getElementById('sGroupId');
+  if(gSel) gSel.innerHTML = teacherGroups.map(g=>`<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('') || '<option value="">У преподавателя нет групп</option>';
+}
+function scheduleRowHtml(sc, isAdmin){
+  return `<div class="sched-row" data-row>
+    <select ${isAdmin?'':'disabled'} class="schedDay">${[1,2,3,4,5,6,7].map(d=>`<option value="${d}" ${sc.day==d?'selected':''}>${DAY_NAMES[d-1]}</option>`).join('')}</select>
+    <input ${isAdmin?'':'disabled'} type="time" class="schedTime" value="${sc.time}">
+    ${isAdmin?`<button class="btn sm ghost" type="button" onclick="this.parentElement.remove()">✕</button>`:''}
+  </div>`;
+}
+function addScheduleRow(containerId){
+  document.getElementById(containerId||'scheduleRows').insertAdjacentHTML('beforeend', scheduleRowHtml({day:1,time:'16:00'}, true));
+}
+
+async function openStudentModal(id){
+  const isAdmin = session.role==='admin';
+  const s = id ? getStudent(id) : {last_name:'',first_name:'',birth_date:'',phone:'',channel:'WhatsApp',duration:60,schedule:[],price:0,teacher_rate:0,teacher_id:(isAdmin?cache.teachers[0]?.id:session.userId),group_id:null,parent_name:'',parent_phone:'',parent_channel:'',goals:'',kontur_link:'',progress_me:'',grade:9,exam_oge:false,exam_ege:false};
+  if(!id && !isAdmin){ toast('Только администратор может добавлять учеников'); return; }
+  openOverlay(`<div class="modal wide">
+    <div class="modal-head"><h2>${id?(escapeHtml(s.last_name)+' '+escapeHtml(s.first_name)):'Новый ученик'}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+    ${studentFormHtml(s, isAdmin)}
+    <div style="display:flex;gap:8px;margin-top:18px;justify-content:space-between;">
+      <div>${id && isAdmin ? `<button class="btn danger" onclick="deleteStudent('${id}')">Удалить ученика</button>`:''}</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn ghost" onclick="closeOverlay()">Закрыть</button>
+        <button class="btn primary" onclick="saveStudent(${id?`'${id}'`:'null'}, ${isAdmin})">Сохранить</button>
+      </div>
+    </div>
+  </div>`);
+  if(id){
+    loadPaymentsIntoModal(id, isAdmin);
+    loadReportsIntoModal(id);
+  } else {
+    document.getElementById('reportsList').innerHTML = '<li>Сначала сохраните ученика</li>';
+  }
+}
+async function loadPaymentsIntoModal(studentId, isAdmin){
+  if(!isAdmin) return;
+  const { data, error } = await sb.from('payments').select('*').eq('student_id', studentId).order('date',{ascending:false});
+  const el = document.getElementById('paymentsList');
+  if(!el) return;
+  if(error){ el.innerHTML = '<li>Ошибка загрузки</li>'; return; }
+  el.innerHTML = (data&&data.length) ? data.map(p=>`<li><span>${dayjs(p.date).format('DD.MM.YYYY')} · ${p.count} занятий · ${escapeHtml(p.method||'')}${p.period_from?` · период ${dayjs(p.period_from).format('DD.MM')}–${dayjs(p.period_to).format('DD.MM.YYYY')}`:''}</span>
+    <span>${fmtMoney(p.amount)} <button class="btn sm ghost" onclick="removePayment('${studentId}','${p.id}')">✕</button></span></li>`).join('') : '<li>Оплат пока нет</li>';
+}
+async function loadReportsIntoModal(studentId){
+  const { data, error } = await sb.from('reports').select('*').eq('student_id', studentId).order('month',{ascending:false});
+  const el = document.getElementById('reportsList');
+  if(!el) return;
+  if(error){ el.innerHTML = '<li>Ошибка загрузки</li>'; return; }
+  el.innerHTML = (data&&data.length) ? data.map(r=>`<li><span><strong>${r.month}</strong> — ${escapeHtml((r.content||r.comments||'').slice(0,60))}${(r.content||r.comments||'').length>60?'…':''}</span>
+    <button class="btn sm ghost" onclick="openReportModal('${studentId}','${r.id}')">Открыть</button></li>`).join('') : '<li>Пока нет записей</li>';
+}
+
+async function saveStudent(id, isAdmin){
+  const goals = document.getElementById('sGoals').value;
+  const grade = parseInt(document.getElementById('sGrade').value,10);
+  const exam_oge = document.getElementById('sExamOge').checked;
+  const exam_ege = document.getElementById('sExamEge').checked;
+  let data;
+  if(isAdmin){
+    const mode = document.getElementById('sMode').value;
+    const grouped = mode==='group';
+    data = {
+      last_name: document.getElementById('sLastName').value.trim(),
+      first_name: document.getElementById('sFirstName').value.trim(),
+      birth_date: document.getElementById('sBirth').value || null,
+      phone: document.getElementById('sPhone').value.trim(),
+      channel: document.getElementById('sChannel').value,
+      price: parseFloat(document.getElementById('sPrice').value)||0,
+      teacher_id: document.getElementById('sTeacherId').value,
+      kontur_link: document.getElementById('sKontur').value.trim(),
+      progress_me: document.getElementById('sProgressMe').value.trim(),
+      parent_name: document.getElementById('sParentName').value.trim(),
+      parent_phone: document.getElementById('sParentPhone').value.trim(),
+      parent_channel: document.getElementById('sParentChannel').value,
+      grade, exam_oge, exam_ege,
+      goals,
+    };
+    if(grouped){
+      const gId = document.getElementById('sGroupId').value;
+      if(!gId){ toast('Выберите группу или переключите тип занятий на «Индивидуально»'); return; }
+      data.group_id = gId;
+      data.duration = null;
+      data.schedule = [];
+      data.teacher_rate = 0;
+    } else {
+      const scheduleRows = [...document.querySelectorAll('#scheduleRows [data-row]')].map(row=>({
+        day: parseInt(row.querySelector('.schedDay').value,10),
+        time: row.querySelector('.schedTime').value,
+      }));
+      data.group_id = null;
+      data.duration = parseInt(document.getElementById('sDuration').value,10);
+      data.schedule = scheduleRows;
+      data.teacher_rate = parseFloat(document.getElementById('sTeacherRate').value)||0;
+    }
+  } else {
+    data = { goals, grade, exam_oge, exam_ege };
+    const grouped = document.getElementById('sMode').value==='group';
+    if(!grouped){
+      const scheduleRows = [...document.querySelectorAll('#scheduleRows [data-row]')].map(row=>({
+        day: parseInt(row.querySelector('.schedDay').value,10),
+        time: row.querySelector('.schedTime').value,
+      }));
+      data.duration = parseInt(document.getElementById('sDuration').value,10);
+      data.schedule = scheduleRows;
+    }
+  }
+  let error;
+  if(id){ ({ error } = await sb.from('students').update(data).eq('id', id)); }
+  else { ({ error } = await sb.from('students').insert(data)); }
+  if(error){ toast('Ошибка сохранения: '+error.message); return; }
+  await refreshStudents(); closeOverlay(); renderStudents(); toast('Сохранено');
+}
+async function deleteStudent(id){
+  if(!confirm('Удалить ученика? Все отчёты и оплаты будут удалены.')) return;
+  const { error } = await sb.from('students').delete().eq('id', id);
+  if(error){ toast('Ошибка: '+error.message); return; }
+  await refreshStudents(); closeOverlay(); renderStudents();
+}
+function togglePayBankOther(){
+  const v = document.getElementById('payBank').value;
+  document.getElementById('payBankOtherWrap').style.display = v==='other' ? 'block':'none';
+}
+async function addPayment(studentId){
+  const date = document.getElementById('payDate').value;
+  const count = parseInt(document.getElementById('payCount').value,10)||0;
+  const amount = parseFloat(document.getElementById('payAmount').value)||0;
+  const bankSel = document.getElementById('payBank').value;
+  const method = bankSel==='other' ? (document.getElementById('payBankOther').value.trim()||'Другое') : bankSel;
+  const period_from = document.getElementById('payPeriodFrom').value || null;
+  const period_to = document.getElementById('payPeriodTo').value || null;
+  if(!date || count<=0){ toast('Укажите дату и количество занятий'); return; }
+  const { error } = await sb.from('payments').insert({ student_id:studentId, date, count, amount, method, period_from, period_to });
+  if(error){ toast('Ошибка: '+error.message); return; }
+  toast('Оплата добавлена');
+  loadPaymentsIntoModal(studentId, true);
+}
+async function removePayment(studentId, paymentId){
+  const { error } = await sb.from('payments').delete().eq('id', paymentId);
+  if(error){ toast('Ошибка: '+error.message); return; }
+  loadPaymentsIntoModal(studentId, true);
+}
+
+/* ---------- Комментарий/отчёт за месяц для отдельного ученика ---------- */
+async function openReportModal(studentId, reportId){
+  const s = getStudent(studentId);
+  const grouped = isGrouped(s);
+  let existing = null;
+  if(reportId){
+    const { data } = await sb.from('reports').select('*').eq('id', reportId).maybeSingle();
+    existing = data;
+  }
+  const month = existing ? existing.month : dayjs().format('YYYY-MM');
+  openOverlay(`<div class="modal">
+    <div class="modal-head"><h2>${grouped?'Комментарий по ученику в группе':'Отчёт за месяц'} — ${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+    ${grouped ? `<p style="color:var(--ink-light);margin-top:-8px;font-size:12.5px;">Общая программа и итоги группы вносятся в карточке группы. Здесь — только заметка по этому ученику.</p>` : ''}
+    <div class="field"><label>Месяц</label><input type="month" id="repMonth" value="${month}"></div>
+    ${!grouped ? `<div class="field"><label>Чему научился ученик</label><textarea id="repContent" rows="4">${escapeHtml(existing?.content||'')}</textarea></div>` : `<input type="hidden" id="repContent" value="${escapeHtml(existing?.content||'')}">`}
+    <div class="field"><label>Комментарии (посещаемость, активность, ДЗ)</label><textarea id="repComments" rows="3">${escapeHtml(existing?.comments||'')}</textarea></div>
+    <div style="display:flex;justify-content:space-between;margin-top:14px;">
+      <div>${existing?`<button class="btn danger" onclick="deleteReport('${studentId}','${existing.id}')">Удалить</button>`:''}</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn ghost" onclick="closeOverlay()">Отмена</button>
+        <button class="btn primary" onclick="saveReport('${studentId}', ${existing?`'${existing.id}'`:'null'})">Сохранить</button>
+      </div>
+    </div>
+  </div>`);
+}
+async function saveReport(studentId, reportId){
+  const s = getStudent(studentId);
+  const data = {
+    student_id: studentId,
+    group_id: s.group_id || null,
+    teacher_id: s.teacher_id,
+    month: document.getElementById('repMonth').value,
+    content: document.getElementById('repContent').value.trim(),
+    comments: document.getElementById('repComments').value.trim(),
+  };
+  let error;
+  if(reportId){ ({ error } = await sb.from('reports').update(data).eq('id', reportId)); }
+  else { ({ error } = await sb.from('reports').insert(data)); }
+  if(error){ toast('Ошибка: '+error.message); return; }
+  closeOverlay(); renderStudents(); toast('Сохранено');
+}
+async function deleteReport(studentId, reportId){
+  const { error } = await sb.from('reports').delete().eq('id', reportId);
+  if(error){ toast('Ошибка: '+error.message); return; }
+  closeOverlay(); renderStudents();
+}
+
+/* ---------- Программа и итоги месяца для группы целиком ---------- */
+async function loadGroupReportsIntoModal(groupId){
+  const { data, error } = await sb.from('reports').select('*').eq('group_id', groupId).is('student_id', null).order('month',{ascending:false});
+  const el = document.getElementById('groupReportsList');
+  if(!el) return;
+  if(error){ el.innerHTML = '<li>Ошибка загрузки</li>'; return; }
+  el.innerHTML = (data&&data.length) ? data.map(r=>`<li><span><strong>${r.month}</strong> — ${escapeHtml((r.content||'').slice(0,60))}${(r.content||'').length>60?'…':''}</span>
+    <button class="btn sm ghost" onclick="openGroupReportModal('${groupId}','${r.id}')">Открыть</button></li>`).join('') : '<li>Пока нет записей</li>';
+}
+async function openGroupReportModal(groupId, reportId){
+  const g = getGroup(groupId);
+  let existing = null;
+  if(reportId){ const { data } = await sb.from('reports').select('*').eq('id', reportId).maybeSingle(); existing = data; }
+  const month = existing ? existing.month : dayjs().format('YYYY-MM');
+  openOverlay(`<div class="modal">
+    <div class="modal-head"><h2>Программа и итоги месяца — ${escapeHtml(g.name)}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+    <div class="field"><label>Месяц</label><input type="month" id="gRepMonth" value="${month}"></div>
+    <div class="field"><label>Программа и итоги месяца (для всей группы)</label><textarea id="gRepContent" rows="5">${escapeHtml(existing?.content||'')}</textarea></div>
+    <div style="display:flex;justify-content:space-between;margin-top:14px;">
+      <div>${existing?`<button class="btn danger" onclick="deleteGroupReport('${groupId}','${existing.id}')">Удалить</button>`:''}</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn ghost" onclick="openGroupModal('${groupId}')">Назад к группе</button>
+        <button class="btn primary" onclick="saveGroupReport('${groupId}', ${existing?`'${existing.id}'`:'null'})">Сохранить</button>
+      </div>
+    </div>
+  </div>`);
+}
+async function saveGroupReport(groupId, reportId){
+  const g = getGroup(groupId);
+  const data = {
+    group_id: groupId, student_id: null, teacher_id: g.teacher_id,
+    month: document.getElementById('gRepMonth').value,
+    content: document.getElementById('gRepContent').value.trim(),
+  };
+  let error;
+  if(reportId){ ({ error } = await sb.from('reports').update(data).eq('id', reportId)); }
+  else { ({ error } = await sb.from('reports').insert(data)); }
+  if(error){ toast('Ошибка: '+error.message); return; }
+  toast('Сохранено'); openGroupModal(groupId);
+}
+async function deleteGroupReport(groupId, reportId){
+  const { error } = await sb.from('reports').delete().eq('id', reportId);
+  if(error){ toast('Ошибка: '+error.message); return; }
+  openGroupModal(groupId);
+}
+
+/* ==================================================================
+   6c. ПРОБНИКИ ОГЭ / ЕГЭ
+   ================================================================== */
+function examTotals(tasks){
+  const score = tasks.reduce((a,t)=>a+(Number(t.score)||0),0);
+  const max = tasks.reduce((a,t)=>a+(Number(t.max)||0),0);
+  return {score, max};
+}
+function examResultLabel(examType, score, max){
+  if(examType==='oge') return 'Оценка «'+ogeGrade(score)+'»';
+  return 'Тестовый балл: '+egeTestScore(score)+' из 100';
+}
+async function loadMockExamsIntoModal(studentId, examType){
+  const { data, error } = await sb.from('mock_exams').select('*').eq('student_id', studentId).eq('exam_type', examType).order('date',{ascending:false});
+  const el = document.getElementById('mockExamsList'+(examType==='oge'?'Oge':'Ege'));
+  if(!el) return;
+  if(error){
+    if(error.code==='42P01' || /does not exist/i.test(error.message)){
+      el.innerHTML = '<li>Таблица «mock_exams» ещё не создана в Supabase — выполните SQL-миграцию для пробников</li>';
+    } else {
+      el.innerHTML = '<li>Ошибка загрузки: '+escapeHtml(error.message)+'</li>';
+    }
+    return;
+  }
+  el.innerHTML = (data&&data.length) ? data.map(ex=>{
+    const {score,max} = examTotals(ex.tasks||[]);
+    return `<li><span>${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'Пробник')} <span style="color:var(--ink-light);">(${score}/${max}, ${examResultLabel(examType,score,max)})</span></span>
+    <button class="btn sm ghost" onclick="openMockExamModal('${studentId}','${examType}','${ex.id}')">Открыть</button></li>`;
+  }).join('') : '<li>Пробников пока нет</li>';
+}
+
+function examTaskRowHtml(examType, name, task){
+  const t = task || {name, score:0, max:(examType==='oge'?OGE_DEFAULT_MAX[name]:EGE_DEFAULT_MAX[name])||0, correct:0, maxCorrect:(examType==='ege'?EGE_DEFAULT_MAX[name]:0)||0};
+  const lvl = taskLevel(t.score, t.max);
+  const isEge = examType==='ege';
+  return `<div class="exam-row ${isEge?'ege':''}" data-task-row data-name="${escapeHtml(name)}">
+    <div>${escapeHtml(name)}</div>
+    <input type="number" class="taskScore" value="${t.score||0}" oninput="recalcExamRow(this)">
+    <input type="number" class="taskMax" value="${t.max||0}" oninput="recalcExamRow(this)">
+    ${isEge?`<input type="number" class="taskCorrect" value="${t.correct||0}">
+    <input type="number" class="taskMaxCorrect" value="${t.maxCorrect!==undefined&&t.maxCorrect!==null?t.maxCorrect:(EGE_DEFAULT_MAX[name]||0)}" readonly title="Заполняется автоматически по таблице заданий">`:''}
+    <span class="lvl-badge ${lvl.cls}" data-lvl-badge>${lvl.label}</span>
+  </div>`;
+}
+function recalcExamRow(inputEl){
+  const row = inputEl.closest('[data-task-row]');
+  const score = parseFloat(row.querySelector('.taskScore').value)||0;
+  const max = parseFloat(row.querySelector('.taskMax').value)||0;
+  const lvl = taskLevel(score, max);
+  const badge = row.querySelector('[data-lvl-badge]');
+  badge.textContent = lvl.label;
+  badge.className = 'lvl-badge '+lvl.cls;
+  recalcExamTotals();
+}
+function recalcExamTotals(){
+  const examType = document.getElementById('examTypeField').value;
+  let score=0, max=0;
+  document.querySelectorAll('[data-task-row]').forEach(row=>{
+    score += parseFloat(row.querySelector('.taskScore').value)||0;
+    max += parseFloat(row.querySelector('.taskMax').value)||0;
+  });
+  document.getElementById('examTotalScore').textContent = score;
+  document.getElementById('examTotalMax').textContent = max;
+  document.getElementById('examResultBadge').textContent = examResultLabel(examType, score, max);
+}
+
+let mockExamPhotosDraft = [];
+function renderExamPhotosDraft(){
+  const el = document.getElementById('examPhotosList');
+  if(!el) return;
+  el.innerHTML = mockExamPhotosDraft.length ? mockExamPhotosDraft.map((url,i)=>
+    `<span class="exam-photo-thumb"><a href="${escapeHtml(url)}" target="_blank" rel="noopener">Фото ${i+1}</a> <button class="btn sm ghost" type="button" onclick="removeExamPhoto(${i})">✕</button></span>`
+  ).join('') : '<p style="color:var(--ink-light);font-size:12px;">Фото бланков пока не добавлены.</p>';
+}
+function removeExamPhoto(i){ mockExamPhotosDraft.splice(i,1); renderExamPhotosDraft(); }
+function addExamPhotoUrl(){
+  const input = document.getElementById('examPhotoUrlInput');
+  const url = input.value.trim();
+  if(!url) return;
+  mockExamPhotosDraft.push(url);
+  input.value = '';
+  renderExamPhotosDraft();
+}
+async function uploadExamPhotoFile(evt){
+  const file = evt.target.files[0];
+  if(!file) return;
+  toast('Загружаем фото…');
+  const path = `${session.userId}/${Date.now()}-${file.name}`.replace(/\s+/g,'_');
+  const { error } = await sb.storage.from('exam-photos').upload(path, file, {upsert:false});
+  if(error){ toast('Не удалось загрузить фото: '+error.message); return; }
+  const { data } = sb.storage.from('exam-photos').getPublicUrl(path);
+  mockExamPhotosDraft.push(data.publicUrl);
+  renderExamPhotosDraft();
+  toast('Фото загружено');
+  evt.target.value = '';
+}
+
+async function openMockExamModal(studentId, examType, examId){
+ try {
+  const s = getStudent(studentId);
+  if(!s){ toast('Ученик не найден — переоткройте карточку'); return; }
+  let existing = null;
+  if(examId){
+    const { data, error: fetchErr } = await sb.from('mock_exams').select('*').eq('id', examId).maybeSingle();
+    if(fetchErr){ toast('Ошибка загрузки пробника: '+fetchErr.message); return; }
+    existing = data;
+  }
+  const tasksList = examType==='oge' ? TASKS_OGE : TASKS_EGE;
+  const existingTasksByName = {};
+  (existing?.tasks||[]).forEach(t=>{ existingTasksByName[t.name] = t; });
+  mockExamPhotosDraft = existing?.photos ? [...existing.photos] : [];
+
+  openOverlay(`<div class="modal wide">
+    <div class="modal-head"><h2>Пробник ${examType==='oge'?'ОГЭ':'ЕГЭ'} — ${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+    <input type="hidden" id="examTypeField" value="${examType}">
+    <div class="form-grid">
+      <div class="field"><label>Дата</label><input type="date" id="examDate" value="${existing?.date||dayjs().format('YYYY-MM-DD')}"></div>
+      <div class="field"><label>Название</label><input id="examName" value="${escapeHtml(existing?.name||'Пробник')}"></div>
+    </div>
+
+    <div class="exam-row head ${examType==='ege'?'ege':''}" style="margin-top:14px;">
+      <div>Задание</div><div>Балл</div><div>Макс балл</div>${examType==='ege'?'<div>Прав. отв.</div><div>Макс прав.</div>':''}<div>Результат</div>
+    </div>
+    <div id="examTaskRows">
+      ${tasksList.map(name=>examTaskRowHtml(examType, name, existingTasksByName[name])).join('')}
+    </div>
+
+    <div class="stat-card" style="margin-top:14px;">
+      <div class="label">Итого: <span id="examTotalScore">0</span> из <span id="examTotalMax">0</span></div>
+      <div class="value" id="examResultBadge" style="font-size:16px;"></div>
+    </div>
+
+    <h3 style="margin-top:16px;">Фото бланков</h3>
+    <div id="examPhotosList"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+      <input id="examPhotoUrlInput" placeholder="Ссылка на фото" style="flex:1;min-width:180px;padding:8px 10px;border:none;border-radius:8px;background:var(--grey);">
+      <button class="btn sm ghost" type="button" onclick="addExamPhotoUrl()">+ Добавить ссылку</button>
+      <label class="btn sm ghost" style="cursor:pointer;">📷 Загрузить фото<input type="file" accept="image/*" style="display:none;" onchange="uploadExamPhotoFile(event)"></label>
+    </div>
+
+    <h3 style="margin-top:16px;">Комментарий преподавателя</h3>
+    <div class="field full"><textarea id="examComment" rows="3">${escapeHtml(existing?.comment||'')}</textarea></div>
+
+    <div style="display:flex;justify-content:space-between;margin-top:18px;">
+      <div>${examId?`<button class="btn danger" onclick="deleteMockExam('${studentId}','${examType}','${examId}')">Удалить пробник</button>`:''}</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn ghost" onclick="openStudentModal('${studentId}')">Назад к ученику</button>
+        <button class="btn primary" onclick="saveMockExam('${studentId}','${examType}', ${examId?`'${examId}'`:'null'})">Сохранить</button>
+      </div>
+    </div>
+  </div>`);
+  renderExamPhotosDraft();
+  recalcExamTotals();
+ } catch(err){
+  console.error('openMockExamModal exception:', err);
+  toast('Не удалось открыть форму пробника: '+err.message);
+ }
+}
+async function saveMockExam(studentId, examType, examId){
+ try {
+  const s = getStudent(studentId);
+  const tasks = [];
+  document.querySelectorAll('[data-task-row]').forEach(row=>{
+    const t = { name: row.dataset.name, score: parseFloat(row.querySelector('.taskScore').value)||0, max: parseFloat(row.querySelector('.taskMax').value)||0 };
+    if(examType==='ege'){ t.correct = parseFloat(row.querySelector('.taskCorrect').value)||0; t.maxCorrect = parseFloat(row.querySelector('.taskMaxCorrect').value)||0; }
+    tasks.push(t);
+  });
+  if(!tasks.length){ toast('Не удалось считать задания формы — попробуйте переоткрыть карточку пробника'); return; }
+  const data = {
+    student_id: studentId, teacher_id: s.teacher_id, exam_type: examType,
+    date: document.getElementById('examDate').value,
+    name: document.getElementById('examName').value.trim(),
+    tasks, comment: document.getElementById('examComment').value.trim(),
+    photos: mockExamPhotosDraft,
+  };
+  let error;
+  if(examId){ ({ error } = await sb.from('mock_exams').update(data).eq('id', examId)); }
+  else { ({ error } = await sb.from('mock_exams').insert(data)); }
+  if(error){
+    console.error('saveMockExam error:', error);
+    if(error.code==='42P01' || /does not exist/i.test(error.message)){
+      toast('Таблица «mock_exams» ещё не создана в Supabase — выполните SQL-миграцию для пробников (см. инструкцию в чате)');
+    } else if(error.code==='42501' || /row-level security|permission denied/i.test(error.message)){
+      toast('Нет прав на сохранение — проверьте политики RLS для таблицы mock_exams в Supabase');
+    } else {
+      toast('Ошибка сохранения: '+error.message);
+    }
+    return;
+  }
+  toast('Пробник сохранён');
+  openStudentModal(studentId);
+ } catch(err){
+  console.error('saveMockExam exception:', err);
+  toast('Непредвиденная ошибка при сохранении пробника: '+err.message);
+ }
+}
+async function deleteMockExam(studentId, examType, examId){
+  if(!confirm('Удалить этот пробник?')) return;
+  const { error } = await sb.from('mock_exams').delete().eq('id', examId);
+  if(error){ toast('Ошибка: '+error.message); return; }
+  openStudentModal(studentId);
+}
+
+/* ---------- Отчёт по пробникам (прогресс + таблица конкретного пробника) ---------- */
+let mockExamsReportChart1 = null, mockExamsReportChart2 = null;
+async function openMockExamsModal(studentId){
+  const s = getStudent(studentId);
+  const { data, error } = await sb.from('mock_exams').select('*').eq('student_id', studentId).order('date',{ascending:true});
+  if(error){ toast('Ошибка: '+error.message); return; }
+  const exams = data || [];
+  const ogeExams = exams.filter(e=>e.exam_type==='oge');
+  const egeExams = exams.filter(e=>e.exam_type==='ege');
+  const isAdmin = session.role==='admin';
+  openOverlay(`<div class="modal wide">
+    <div class="modal-head"><h2>Пробники — ${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+
+    ${s.exam_oge ? `<h3>ОГЭ</h3>
+    <div class="simple-list" style="margin-bottom:6px;">
+      ${ogeExams.length ? ogeExams.map(ex=>{ const {score,max}=examTotals(ex.tasks||[]); return `<div class="simple-row">
+        <span class="name">${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'')}</span>
+        <span class="meta2">${score}/${max} · ${examResultLabel('oge',score,max)}</span>
+        <button class="btn sm ghost" onclick="openMockExamModal('${studentId}','oge','${ex.id}')">Открыть</button>
+      </div>`; }).join('') : '<div class="simple-row">Пробников ОГЭ пока нет</div>'}
+    </div>
+    <button class="btn sm accent" onclick="openMockExamModal('${studentId}','oge')">+ Добавить результаты пробника ОГЭ</button>` : ''}
+
+    ${s.exam_ege ? `<h3 style="margin-top:${s.exam_oge?'20px':'0'};">ЕГЭ</h3>
+    <div class="simple-list" style="margin-bottom:6px;">
+      ${egeExams.length ? egeExams.map(ex=>{ const {score,max}=examTotals(ex.tasks||[]); return `<div class="simple-row">
+        <span class="name">${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'')}</span>
+        <span class="meta2">${score}/${max} · ${examResultLabel('ege',score,max)}</span>
+        <button class="btn sm ghost" onclick="openMockExamModal('${studentId}','ege','${ex.id}')">Открыть</button>
+      </div>`; }).join('') : '<div class="simple-row">Пробников ЕГЭ пока нет</div>'}
+    </div>
+    <button class="btn sm accent" onclick="openMockExamModal('${studentId}','ege')">+ Добавить результаты пробника ЕГЭ</button>` : ''}
+
+    ${(!s.exam_oge && !s.exam_ege) ? `<p style="color:var(--ink-light);font-size:12.5px;">У ученика не отмечено ОГЭ или ЕГЭ — откройте карточку ученика и отметьте нужный экзамен.</p>` : ''}
+
+    <h3 style="margin-top:22px;">Отчёт по пробникам</h3>
+    <p style="color:var(--ink-light);font-size:12.5px;margin-top:-8px;">Выберите пробники для включения в отчёт.</p>
+    <div style="display:flex;gap:8px;margin-bottom:8px;">
+      <button class="btn sm ghost" onclick="toggleAllExamChecks(true)">Выбрать все</button>
+      <button class="btn sm ghost" onclick="toggleAllExamChecks(false)">Снять все</button>
+    </div>
+    <div class="simple-list" id="examCheckList" style="max-height:200px;overflow-y:auto;">
+      ${exams.length ? exams.map(ex=>{
+        const {score,max} = examTotals(ex.tasks||[]);
+        return `<label class="simple-row" style="cursor:pointer;">
+          <input type="checkbox" class="examCheck" value="${ex.id}" checked style="margin-right:8px;">
+          <span class="name">${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'')} (${ex.exam_type==='oge'?'ОГЭ':'ЕГЭ'})</span>
+          <span class="meta2">${score}/${max}</span>
+        </label>`;
+      }).join('') : '<div class="simple-row">Пробников пока нет — добавьте хотя бы один выше</div>'}
+    </div>
+    <div class="field" style="margin-top:12px;">
+      <label>Добавить в отчёт таблицу конкретного пробника (необязательно)</label>
+      <select id="examTableSelect"><option value="">Не добавлять</option>${exams.map(ex=>`<option value="${ex.id}">${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'')}</option>`).join('')}</select>
+    </div>
+    <button class="btn sm accent" style="margin-top:10px;" onclick="regenerateMockExamsReport('${studentId}')">Сформировать отчёт</button>
+
+    <div id="mockExamsReportPreview" style="margin-top:16px;"></div>
+
+    <div style="display:flex;justify-content:center;gap:8px;margin-top:16px;">
+      <button class="btn primary" onclick="exportNodeAsPNG('mockExamsReportPreview','probniki-${escapeHtml(s.last_name)}')">⭳ Скачать PNG</button>
+      <button class="btn primary" onclick="exportNodeAsPDF('mockExamsReportPreview','probniki-${escapeHtml(s.last_name)}')">⭳ Скачать PDF</button>
+    </div>
+  </div>`);
+}
+function toggleAllExamChecks(state){
+  document.querySelectorAll('.examCheck').forEach(cb=>cb.checked=state);
+}
+async function regenerateMockExamsReport(studentId){
+  const s = getStudent(studentId);
+  const selectedIds = [...document.querySelectorAll('.examCheck:checked')].map(cb=>cb.value);
+  const { data, error } = await sb.from('mock_exams').select('*').in('id', selectedIds.length?selectedIds:['00000000-0000-0000-0000-000000000000']).order('date',{ascending:true});
+  if(error){ toast('Ошибка: '+error.message); return; }
+  const exams = data || [];
+  const ogeExams = exams.filter(e=>e.exam_type==='oge');
+  const egeExams = exams.filter(e=>e.exam_type==='ege');
+  const tableExamId = document.getElementById('examTableSelect').value;
+  const tableExam = tableExamId ? exams.find(e=>e.id===tableExamId) : null;
+
+  const preview = document.getElementById('mockExamsReportPreview');
+  preview.innerHTML = `
+    <h3>Прогресс по пробникам</h3>
+    ${ogeExams.length ? `<p style="font-weight:700;font-size:13px;margin-bottom:4px;">ОГЭ — оценка по пробникам</p><div class="report-chart-wrap" style="margin-bottom:14px;"><canvas id="examChartOge" height="90"></canvas></div>` : ''}
+    ${egeExams.length ? `<p style="font-weight:700;font-size:13px;margin-bottom:4px;">ЕГЭ — тестовый балл по пробникам</p><div class="report-chart-wrap" style="margin-bottom:14px;"><canvas id="examChartEge" height="90"></canvas></div>` : ''}
+    <h3 style="margin-top:10px;">Список пробников</h3>
+    <div class="simple-list">
+      ${exams.map(ex=>{ const {score,max}=examTotals(ex.tasks||[]); return `<div class="simple-row"><span class="name">${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'')} (${ex.exam_type==='oge'?'ОГЭ':'ЕГЭ'})</span><span class="meta2">${score}/${max} · ${examResultLabel(ex.exam_type,score,max)}</span></div>${ex.comment?`<div class="simple-row" style="border:none;padding-top:0;color:var(--ink-light);font-size:12px;">Комментарий: ${escapeHtml(ex.comment)}</div>`:''}`; }).join('') || '<div class="simple-row">Ничего не выбрано</div>'}
+    </div>
+    ${tableExam ? renderExamTableBlock(tableExam) : ''}
+  `;
+
+  if(mockExamsReportChart1){ mockExamsReportChart1.destroy(); mockExamsReportChart1=null; }
+  if(mockExamsReportChart2){ mockExamsReportChart2.destroy(); mockExamsReportChart2=null; }
+  if(ogeExams.length){
+    const ctx = document.getElementById('examChartOge');
+    mockExamsReportChart1 = new Chart(ctx, {
+      type:'line',
+      data:{ labels: ogeExams.map(e=>dayjs(e.date).format('DD.MM')), datasets:[{ label:'Балл за пробник', data: ogeExams.map(e=>examTotals(e.tasks||[]).score), borderColor:'#62131b', backgroundColor:'rgba(98,19,27,.10)', tension:.3, fill:true }] },
+      options:{ plugins:{legend:{display:false}}, scales:{ y:{ min:0, max:68 } } }
+    });
+  }
+  if(egeExams.length){
+    const ctx = document.getElementById('examChartEge');
+    mockExamsReportChart2 = new Chart(ctx, {
+      type:'line',
+      data:{ labels: egeExams.map(e=>dayjs(e.date).format('DD.MM')), datasets:[{ label:'Тестовый балл', data: egeExams.map(e=>egeTestScore(examTotals(e.tasks||[]).score)), borderColor:'#3E8E5D', backgroundColor:'rgba(62,142,93,.10)', tension:.3, fill:true }] },
+      options:{ plugins:{legend:{display:false}}, scales:{ y:{ min:0, max:100 } } }
+    });
+  }
+}
+function renderExamTableBlock(ex){
+  const {score,max} = examTotals(ex.tasks||[]);
+  const isEge = ex.exam_type==='ege';
+  return `<h3 style="margin-top:16px;">Таблица пробника: ${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'')}</h3>
+    <div class="exam-row head ${isEge?'ege':''}">
+      <div>Задание</div><div>Балл</div><div>Макс</div>${isEge?'<div>Прав.</div><div>Макс пр.</div>':''}<div>Результат</div>
+    </div>
+    ${(ex.tasks||[]).map(t=>{ const lvl=taskLevel(t.score,t.max); return `<div class="exam-row ${isEge?'ege':''}">
+      <div>${escapeHtml(t.name)}</div><div>${t.score}</div><div>${t.max}</div>${isEge?`<div>${t.correct||0}</div><div>${t.maxCorrect||0}</div>`:''}<div><span class="lvl-badge ${lvl.cls}">${lvl.label}</span></div>
+    </div>`; }).join('')}
+    <div class="exam-row ${isEge?'ege':''}" style="font-weight:700;border-top:2px solid var(--wine);margin-top:4px;padding-top:8px;">
+      <div>Итого</div><div>${score}</div><div>${max}</div>${isEge?'<div></div><div></div>':''}<div>${examResultLabel(ex.exam_type,score,max)}</div>
+    </div>
+    ${ex.photos&&ex.photos.length? `<p style="margin-top:8px;font-size:12px;color:var(--ink-light);">Фото бланков: ${ex.photos.map((u,i)=>`<a href="${escapeHtml(u)}" target="_blank" rel="noopener">Фото ${i+1}</a>`).join(', ')}</p>` : ''}
+    ${ex.comment? `<p style="margin-top:6px;font-size:12.5px;"><strong>Комментарий:</strong> ${escapeHtml(ex.comment)}</p>` : ''}`;
+}
+
+/* ==================================================================
+   6b. АВТОМАТИЧЕСКИЙ ОТЧЁТ ДЛЯ РОДИТЕЛЕЙ (квадратный формат)
+   ================================================================== */
+function scheduledCountInRange(scheduleEntity, from, to){
+  let count=0, cur=dayjs(from);
+  const end = dayjs(to);
+  while(!cur.isAfter(end)){
+    if((scheduleEntity.schedule||[]).some(sc=>sc.day===cur.isoWeekday())) count++;
+    cur = cur.add(1,'day');
+  }
+  return count;
+}
+let parentReportChart = null;
+async function openParentReportModal(studentId, from, to){
+  const s = getStudent(studentId);
+  const grouped = isGrouped(s);
+  from = from || dayjs().startOf('month').format('YYYY-MM-DD');
+  to = to || dayjs().endOf('month').format('YYYY-MM-DD');
+  const isAdmin = session.role==='admin';
+
+  openOverlay(`<div class="modal wide">
+    <div class="modal-head"><h2>Отчёт для родителя</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+    ${grouped ? `<p style="color:var(--ink-light);margin-top:-8px;font-size:12px;">Ученик занимается в группе «${escapeHtml(getGroup(s.group_id)?.name||'')}» — статусы занятий общие для группы, цена и комментарии — свои.</p>`:''}
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
+      <div class="field" style="margin:0;"><label>С</label><input type="date" id="prFrom" value="${from}"></div>
+      <div class="field" style="margin:0;"><label>По</label><input type="date" id="prTo" value="${to}"></div>
+      <button class="btn sm accent" onclick="regenerateParentReport('${studentId}')">Сформировать</button>
+      <button class="btn sm ghost" onclick="quickRange('${studentId}','month')">Текущий месяц</button>
+    </div>
+    <div style="display:flex;justify-content:center;">
+      <div class="report-square" id="parentReportSquare"><div class="loading-state">Формируем отчёт…</div></div>
+    </div>
+    <div style="display:flex;justify-content:center;gap:8px;margin-top:16px;">
+      <button class="btn primary" onclick="exportNodeAsPNG('parentReportSquare','otchet-${escapeHtml(s.last_name)}')">⭳ Скачать PNG</button>
+      <button class="btn primary" onclick="exportNodeAsPDF('parentReportSquare','otchet-${escapeHtml(s.last_name)}')">⭳ Скачать PDF</button>
+    </div>
+  </div>`);
+  await regenerateParentReport(studentId);
+}
+function quickRange(studentId, kind){
+  if(kind==='month'){
+    document.getElementById('prFrom').value = dayjs().startOf('month').format('YYYY-MM-DD');
+    document.getElementById('prTo').value = dayjs().endOf('month').format('YYYY-MM-DD');
+  }
+  regenerateParentReport(studentId);
+}
+async function regenerateParentReport(studentId){
+  const s = getStudent(studentId);
+  const grouped = isGrouped(s);
+  const g = grouped ? getGroup(s.group_id) : null;
+  const from = document.getElementById('prFrom').value;
+  const to = document.getElementById('prTo').value;
+
+  let query = sb.from('lessons').select('*').gte('date', from).lte('date', to);
+  query = grouped ? query.eq('group_id', s.group_id) : query.eq('student_id', studentId);
+  const { data: lessons, error } = await query;
+  if(error){ toast('Ошибка: '+error.message); return; }
+  const byDate = {};
+  (lessons||[]).forEach(l=>{ byDate[l.date] = l; });
+
+  const scheduleEntity = grouped ? g : s;
+  const today = todayISO();
+  let scheduled=0, done=0, moved=0, cancelled=0;
+  let cur = dayjs(from);
+  const end = dayjs(to);
+  while(!cur.isAfter(end)){
+    if((scheduleEntity.schedule||[]).some(sc=>sc.day===cur.isoWeekday())){
+      scheduled++;
+      const iso = cur.format('YYYY-MM-DD');
+      const l = byDate[iso];
+      const st = l ? l.status : (iso<today ? 'done' : 'planned');
+      if(st==='done') done++;
+      else if(st==='moved') moved++;
+      else if(st==='cancelled') cancelled++;
+    }
+    cur = cur.add(1,'day');
+  }
+  const attendance = scheduled>0 ? Math.round((done/scheduled)*100) : 0;
+
+  // персональный комментарий ученика за последний месяц периода (для группы — из его собственных записей)
+  const { data: ownReports } = await sb.from('reports').select('*').eq('student_id', studentId).gte('month', dayjs(from).format('YYYY-MM')).lte('month', dayjs(to).format('YYYY-MM'));
+  const personalComment = (ownReports||[]).map(r=>r.comments||r.content).filter(Boolean).join(' ');
+  const goalsText = grouped ? (g?.goals || s.goals || 'Цели пока не заданы.') : (s.goals || 'Цели пока не заданы.');
+
+  document.getElementById('parentReportSquare').innerHTML = `
+    <span class="r-eyebrow">${grouped?'Отчёт по ученику в группе «'+escapeHtml(g?.name||'')+'»':'Отчёт по ученику'}</span>
+    <h2>${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</h2>
+    <div class="r-period">${dayjs(from).format('D MMMM')} — ${dayjs(to).format('D MMMM YYYY')}</div>
+    <div class="report-stats">
+      <div class="report-stat"><div class="l">Занятий состоялось</div><div class="v">${done}</div></div>
+      <div class="report-stat"><div class="l">Посещаемость</div><div class="v">${attendance}%</div></div>
+      <div class="report-stat"><div class="l">Перенесено</div><div class="v">${moved}</div></div>
+      <div class="report-stat"><div class="l">Отменено</div><div class="v">${cancelled}</div></div>
+    </div>
+    <div class="report-chart-wrap"><canvas id="parentReportChart" height="120"></canvas></div>
+    <div class="report-goals"><strong>Цели и программа:</strong><br>${escapeHtml(goalsText)}${personalComment?`<br><br><strong>Комментарий:</strong><br>${escapeHtml(personalComment)}`:''}</div>
+  `;
+  const ctx = document.getElementById('parentReportChart');
+  if(parentReportChart) parentReportChart.destroy();
+  parentReportChart = new Chart(ctx, {
+    type:'doughnut',
+    data:{ labels:['Состоялось','Перенесено','Отменено'], datasets:[{ data:[done,moved,cancelled], backgroundColor:['#3E8E5D','#F6DE7A','#D6584D'], borderWidth:0 }] },
+    options:{ plugins:{ legend:{position:'bottom', labels:{boxWidth:10, font:{size:10.5}}} }, cutout:'62%' }
+  });
+}
+
+/* ==================================================================
+   7. РАСПИСАНИЕ: недельный календарь + статусы занятий
+   (занятие — либо у отдельного ученика, либо у группы целиком)
+   ================================================================== */
+let currentWeekStart = dayjs().startOf('isoWeek');
+let currentMonth = dayjs().startOf('month');
+let lessonsCache = {}; // key: 'student:ID|DATE' или 'group:ID|DATE' -> lesson row
+
+function lessonKey(kind, id, dateISO){ return kind+':'+id+'|'+dateISO; }
+function todayISO(){ return dayjs().format('YYYY-MM-DD'); }
+function getStatus(kind, id, dateISO){
+  const l = lessonsCache[lessonKey(kind,id,dateISO)];
+  if(l) return l.status;
+  // прошедшее занятие без явного статуса — автоматически считается состоявшимся
+  return dateISO < todayISO() ? 'done' : 'planned';
+}
+function getLesson(kind, id, dateISO){ return lessonsCache[lessonKey(kind,id,dateISO)]; }
+function cacheLesson(l){
+  if(l.group_id) lessonsCache[lessonKey('group', l.group_id, l.date)] = l;
+  else lessonsCache[lessonKey('student', l.student_id, l.date)] = l;
+}
+
+async function fetchLessonsForTeacherRange(teacherId, fromISO, toISO){
+  const { data, error } = await sb.from('lessons').select('*').eq('teacher_id', teacherId).gte('date', fromISO).lte('date', toISO);
+  if(error){ toast('Ошибка загрузки занятий: '+error.message); return; }
+  (data||[]).forEach(cacheLesson);
+}
+async function fetchLessonsForAllRange(fromISO, toISO){
+  const { data, error } = await sb.from('lessons').select('*').gte('date', fromISO).lte('date', toISO);
+  if(error){ toast('Ошибка загрузки занятий: '+error.message); return; }
+  (data||[]).forEach(cacheLesson);
+}
+
+function lessonsOnDate(teacherId, dateObj){
+  const iso = dateObj.isoWeekday();
+  const out = [];
+  studentsOfTeacher(teacherId).filter(s=>!s.group_id).forEach(s=>{
+    (s.schedule||[]).forEach(sc=>{ if(sc.day===iso) out.push({kind:'student', id:s.id, label:s.last_name+' '+s.first_name[0]+'.', time:sc.time}); });
+  });
+  groupsOfTeacher(teacherId).forEach(g=>{
+    (g.schedule||[]).forEach(sc=>{ if(sc.day===iso) out.push({kind:'group', id:g.id, label:'👥 '+g.name+' ('+membersOfGroup(g.id).length+')', time:sc.time}); });
+  });
+  out.sort((a,b)=> a.time.localeCompare(b.time));
+  return out;
+}
+
+function populateScheduleTeacherSelect(){
+  const sel = document.getElementById('scheduleTeacherSelect');
+  sel.innerHTML = cache.teachers.map(t=>`<option value="${t.id}">${escapeHtml(t.last_name)} ${escapeHtml(t.first_name)}</option>`).join('');
+  sel.value = currentTeacherForSchedule;
+}
+function onScheduleTeacherChange(){
+  currentTeacherForSchedule = document.getElementById('scheduleTeacherSelect').value;
+  renderScheduleTab();
+}
+function shiftWeek(dir){
+  if(dir===0) currentWeekStart = dayjs().startOf('isoWeek');
+  else currentWeekStart = currentWeekStart.add(dir*7,'day');
+  renderWeekGrid();
+}
+function shiftMonth(dir){
+  currentMonth = currentMonth.add(dir,'month');
+  if(document.getElementById('tab-schedule').classList.contains('active')) renderMonthSummary();
+  if(document.getElementById('tab-admin').classList.contains('active')) renderAdminTab();
+}
+
+async function renderScheduleTab(){
+  if(session.role==='admin' && document.getElementById('scheduleTeacherSelect').options.length===0) populateScheduleTeacherSelect();
+  await renderWeekGrid();
+  await renderMonthSummary();
+}
+
+async function renderWeekGrid(){
+  const teacherId = session.role==='admin' ? currentTeacherForSchedule : session.userId;
+  const grid = document.getElementById('weekGrid');
+  if(!teacherId){ grid.innerHTML = '<div class="empty-state">Нет преподавателей</div>'; return; }
+  grid.innerHTML = '<div class="loading-state">Загрузка…</div>';
+  const today = dayjs().format('YYYY-MM-DD');
+  document.getElementById('scheduleWeekLabel').textContent =
+    `${currentWeekStart.format('D MMM')} – ${currentWeekStart.add(6,'day').format('D MMM YYYY')}`;
+
+  await fetchLessonsForTeacherRange(teacherId, currentWeekStart.format('YYYY-MM-DD'), currentWeekStart.add(6,'day').format('YYYY-MM-DD'));
+
+  let html = '';
+  for(let i=0;i<7;i++){
+    const d = currentWeekStart.add(i,'day');
+    const iso = d.format('YYYY-MM-DD');
+    const lessons = lessonsOnDate(teacherId, d);
+    html += `<div class="week-day ${iso===today?'today':''}">
+      <div class="d-label">${DAY_NAMES[i]} · ${d.format('D MMM')}</div>
+      ${lessons.map(l=>{
+        const st = getStatus(l.kind, l.id, iso);
+        const lesson = getLesson(l.kind, l.id, iso);
+        return `<div class="lesson-block st-${st}" onclick="openStatusModal('${l.kind}','${l.id}','${iso}')">
+          ${escapeHtml(l.label)}
+          <small>${l.time} · ${STATUS_LABEL[st]}${(st==='moved'&&lesson?.moved_to_date)?' → '+dayjs(lesson.moved_to_date).format('DD.MM'):''}</small>
+        </div>`;
+      }).join('') || '<div style="color:var(--ink-light);font-size:11.5px;">Занятий нет</div>'}
+    </div>`;
+  }
+  grid.innerHTML = html;
+}
+
+function openStatusModal(kind, id, dateISO){
+  const isGroup = kind==='group';
+  const entity = isGroup ? getGroup(id) : getStudent(id);
+  const l = getLesson(kind, id, dateISO) || {status:null, initiator:'', reason:'', moved_to_date:''};
+  const currentStatus = getStatus(kind, id, dateISO);
+  const isPastAuto = !l.status && dateISO < todayISO();
+  const rate = isGroup ? (entity.teacher_rate||0) : (entity.teacher_rate||0);
+  const members = isGroup ? membersOfGroup(id) : [];
+  openOverlay(`<div class="modal narrow">
+    <div class="modal-head"><h2>${isGroup ? '👥 '+escapeHtml(entity.name) : escapeHtml(entity.last_name)+' '+escapeHtml(entity.first_name)}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+    <p style="color:var(--ink-light);margin-top:-8px;">${dayjs(dateISO).format('dddd, D MMMM YYYY')}</p>
+    ${isGroup ? `<p style="font-size:12.5px;color:var(--ink-light);">Ученики: ${members.map(m=>escapeHtml(m.last_name)).join(', ')||'—'}</p>` : ''}
+    ${isPastAuto ? `<p style="font-size:12px;color:var(--ink-light);">Дата уже прошла — занятие автоматически считается состоявшимся, если статус не менялся вручную.</p>` : ''}
+    <div class="stat-card" style="margin-bottom:14px;">
+      <div class="label">${isGroup?'Стоимость занятия для преподавателя (за всю группу)':'Стоимость занятия для преподавателя'}</div>
+      <div class="value">${fmtMoney(rate)}</div>
+    </div>
+    <div class="status-picker" id="statusPicker">
+      ${['planned','done','moved','cancelled'].map(st=>`<button type="button" class="st-${st} ${currentStatus===st?'active':''}" data-st="${st}" onclick="pickStatus('${st}')">${STATUS_LABEL[st]}</button>`).join('')}
+    </div>
+    <div id="reasonBlock" style="display:${(currentStatus==='moved'||currentStatus==='cancelled')?'block':'none'};">
+      <div class="field"><label>Инициатор</label>
+        <select id="initiatorSel">
+          <option value="student" ${l.initiator==='student'?'selected':''}>${isGroup?'Ученик/группа':'Ученик'}</option>
+          <option value="teacher" ${l.initiator==='teacher'?'selected':''}>Преподаватель</option>
+        </select>
+      </div>
+      <div class="field"><label>Причина</label>
+        <select id="reasonSel" onchange="toggleReasonOther()">
+          <option value="Болезнь" ${l.reason==='Болезнь'?'selected':''}>Болезнь</option>
+          <option value="Технические трудности" ${l.reason==='Технические трудности'?'selected':''}>Технические трудности</option>
+          <option value="other" ${(l.reason && !['Болезнь','Технические трудности'].includes(l.reason))?'selected':''}>Другая причина…</option>
+        </select>
+      </div>
+      <div class="field" id="reasonOtherWrap" style="display:${(l.reason && !['Болезнь','Технические трудности'].includes(l.reason))?'block':'none'};">
+        <label>Уточните причину</label>
+        <input id="reasonOther" value="${(l.reason && !['Болезнь','Технические трудности'].includes(l.reason))?escapeHtml(l.reason):''}">
+      </div>
+      <div class="field" id="movedToDateWrap" style="display:${currentStatus==='moved'?'block':'none'};">
+        <label>Дата, на которую переносится урок</label>
+        <input type="date" id="movedToDate" value="${l.moved_to_date||''}">
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end;">
+      <button class="btn ghost" onclick="closeOverlay()">Отмена</button>
+      <button class="btn primary" onclick="saveStatus('${kind}','${id}','${dateISO}')">Сохранить</button>
+    </div>
+  </div>`);
+}
+function pickStatus(st){
+  document.querySelectorAll('#statusPicker button').forEach(b=>b.classList.toggle('active', b.dataset.st===st));
+  document.getElementById('reasonBlock').style.display = (st==='moved'||st==='cancelled') ? 'block':'none';
+  const mtd = document.getElementById('movedToDateWrap');
+  if(mtd) mtd.style.display = st==='moved' ? 'block':'none';
+}
+function toggleReasonOther(){
+  document.getElementById('reasonOtherWrap').style.display = document.getElementById('reasonSel').value==='other' ? 'block':'none';
+}
+async function saveStatus(kind, id, dateISO){
+  const isGroup = kind==='group';
+  const entity = isGroup ? getGroup(id) : getStudent(id);
+  const st = document.querySelector('#statusPicker button.active')?.dataset.st || 'planned';
+  const filterCol = isGroup ? 'group_id' : 'student_id';
+  const otherCol = isGroup ? 'student_id' : 'group_id';
+
+  // ищем существующую запись напрямую в базе (не полагаемся на ON CONFLICT — не работает с частичными уникальными индексами)
+  const { data: existingRows, error: findErr } = await sb.from('lessons').select('id').eq(filterCol, id).eq('date', dateISO).is(otherCol, null);
+  if(findErr){ toast('Ошибка: '+findErr.message); return; }
+  const existingId = existingRows && existingRows[0] ? existingRows[0].id : null;
+
+  let error;
+  if(st==='planned'){
+    if(existingId){ ({ error } = await sb.from('lessons').delete().eq('id', existingId)); }
+    delete lessonsCache[lessonKey(kind,id,dateISO)];
+  } else if(st==='done'){
+    const payload = { student_id: isGroup?null:id, group_id: isGroup?id:null, teacher_id: entity.teacher_id, date:dateISO, status:'done', initiator:null, reason:null, moved_to_date:null };
+    if(existingId){ ({ error } = await sb.from('lessons').update(payload).eq('id', existingId)); }
+    else { ({ error } = await sb.from('lessons').insert(payload)); }
+  } else {
+    const initiator = document.getElementById('initiatorSel').value;
+    let reason = document.getElementById('reasonSel').value;
+    if(reason==='other') reason = document.getElementById('reasonOther').value.trim() || 'Другая причина';
+    const movedToDate = st==='moved' ? (document.getElementById('movedToDate').value || null) : null;
+    const payload = { student_id: isGroup?null:id, group_id: isGroup?id:null, teacher_id: entity.teacher_id, date:dateISO, status:st, initiator, reason, moved_to_date:movedToDate };
+    if(existingId){ ({ error } = await sb.from('lessons').update(payload).eq('id', existingId)); }
+    else { ({ error } = await sb.from('lessons').insert(payload)); }
+  }
+  if(error){ toast('Ошибка сохранения: '+error.message); return; }
+  closeOverlay();
+  await renderWeekGrid();
+  await renderMonthSummary();
+  if(document.getElementById('tab-admin').classList.contains('active')) renderAdminTab();
+}
+
+/* ---------- Сводная ведомость за месяц (без <table>, CSS-сетка) ---------- */
+function monthGridTemplate(daysInMonth){
+  return `170px repeat(${daysInMonth}, 28px) 70px 90px`;
+}
+async function renderMonthSummary(){
+  const teacherId = session.role==='admin' ? currentTeacherForSchedule : session.userId;
+  document.getElementById('monthLabel').textContent = currentMonth.format('MMMM YYYY');
+  const container = document.getElementById('teacherMonthTable');
+  if(!teacherId){ container.innerHTML=''; return; }
+  container.innerHTML = '<div class="loading-state">Загрузка…</div>';
+
+  const from = currentMonth.startOf('month').format('YYYY-MM-DD');
+  const to = currentMonth.endOf('month').format('YYYY-MM-DD');
+  await fetchLessonsForTeacherRange(teacherId, from, to);
+
+  const students = studentsOfTeacher(teacherId).filter(s=>!s.group_id);
+  const groups = groupsOfTeacher(teacherId);
+  const rowsData = [
+    ...students.map(s=>({kind:'student', id:s.id, name:s.last_name+' '+s.first_name, schedule:s.schedule, rate:s.teacher_rate})),
+    ...groups.map(g=>({kind:'group', id:g.id, name:'👥 '+g.name, schedule:g.schedule, rate:g.teacher_rate})),
+  ];
+  const daysInMonth = currentMonth.daysInMonth();
+  const today = dayjs().format('YYYY-MM-DD');
+  const tmpl = monthGridTemplate(daysInMonth);
+
+  let head = `<div class="ledger-row head" style="grid-template-columns:${tmpl};"><div class="namecell">Ученик / группа</div>`;
+  for(let d=1; d<=daysInMonth; d++){
+    const dt = currentMonth.date(d);
+    head += `<div class="cell ${dt.isoWeekday()>=6?'weekend':''}">${d}<br>${DAY_NAMES[dt.isoWeekday()-1]}</div>`;
+  }
+  head += `<div class="cell">Занятий</div><div class="cell">Сумма</div></div>`;
+
+  let body = '';
+  let grandCount=0, grandSum=0;
+  rowsData.forEach(r=>{
+    let row = `<div class="namecell">${escapeHtml(r.name)}</div>`;
+    let count=0, sum=0;
+    for(let d=1; d<=daysInMonth; d++){
+      const dt = currentMonth.date(d);
+      const iso = dt.format('YYYY-MM-DD');
+      const scheduled = (r.schedule||[]).some(sc=>sc.day===dt.isoWeekday());
+      const weekend = dt.isoWeekday()>=6;
+      const cellCls = ['cell']; if(weekend) cellCls.push('weekend'); if(iso===today) cellCls.push('today');
+      if(!scheduled){ row += `<div class="${cellCls.join(' ')}"><div class="daychip empty"></div></div>`; continue; }
+      const st = getStatus(r.kind, r.id, iso);
+      if(st==='done'){ count++; sum += (r.rate||0); }
+      row += `<div class="${cellCls.join(' ')}"><div class="daychip st-${st}" onclick="openStatusModal('${r.kind}','${r.id}','${iso}')" title="${STATUS_LABEL[st]}">${st==='planned'?'·':st[0].toUpperCase()}</div></div>`;
+    }
+    row += `<div class="cell" style="font-weight:700;">${count}</div><div class="cell" style="font-weight:700;">${fmtMoney(sum)}</div>`;
+    grandCount+=count; grandSum+=sum;
+    body += `<div class="ledger-row body" style="grid-template-columns:${tmpl};">${row}</div>`;
+  });
+
+  let foot = `<div class="namecell">Итого за месяц</div>`;
+  for(let d=1; d<=daysInMonth; d++) foot += `<div class="cell"></div>`;
+  foot += `<div class="cell">${grandCount}</div><div class="cell">${fmtMoney(grandSum)}</div>`;
+
+  container.innerHTML = rowsData.length ?
+    `<div class="ledger" style="min-width:${180+daysInMonth*28+160}px;">${head}${body}<div class="ledger-row foot" style="grid-template-columns:${tmpl};">${foot}</div></div>` :
+    `<div class="empty-state">У преподавателя пока нет учеников</div>`;
+}
+
+/* ==================================================================
+   8. АДМИН-СВОДКА ПО МЕСЯЦАМ
+   ================================================================== */
+let paymentsCache = {}; // studentId -> [payments] (для текущего загруженного диапазона)
+async function fetchPaymentsForRange(fromISO, toISO){
+  const { data, error } = await sb.from('payments').select('*').gte('date', fromISO).lte('date', toISO);
+  if(error){ toast('Ошибка загрузки оплат: '+error.message); return; }
+  paymentsCache = {};
+  (data||[]).forEach(p=>{ (paymentsCache[p.student_id] = paymentsCache[p.student_id]||[]).push(p); });
+}
+function paymentsInMonthCached(studentId, monthObj){
+  const from = monthObj.startOf('month'), to = monthObj.endOf('month');
+  return (paymentsCache[studentId]||[]).filter(p=>{ const d=dayjs(p.date); return !d.isBefore(from) && !d.isAfter(to); });
+}
+function studentMonthStats(student, monthObj){
+  const daysInMonth = monthObj.daysInMonth();
+  let done=0, movedS=0, movedT=0, cancS=0, cancT=0;
+  for(let d=1; d<=daysInMonth; d++){
+    const dt = monthObj.date(d);
+    const scheduled = (student.schedule||[]).some(sc=>sc.day===dt.isoWeekday());
+    if(!scheduled) continue;
+    const iso = dt.format('YYYY-MM-DD');
+    const st = getStatus('student', student.id, iso);
+    if(st==='done') done++;
+    else if(st==='moved'){ const l=getLesson('student',student.id,iso); if(l?.initiator==='teacher') movedT++; else movedS++; }
+    else if(st==='cancelled'){ const l=getLesson('student',student.id,iso); if(l?.initiator==='teacher') cancT++; else cancS++; }
+  }
+  const pays = paymentsInMonthCached(student.id, monthObj);
+  const paidCount = pays.reduce((a,p)=>a+p.count,0);
+  const paidAmount = pays.reduce((a,p)=>a + (p.amount!==undefined&&p.amount!==null?p.amount:p.count*(student.price||0)), 0);
+  const salary = done * (student.teacher_rate||0);
+  const profitBeforeTax = paidAmount - salary;
+  const tax = paidAmount * 0.04;
+  const profitAfterTax = profitBeforeTax - tax;
+  return {done, movedS, movedT, cancS, cancT, paidCount, paidAmount, salary, profitBeforeTax, tax, profitAfterTax, pays};
+}
+function groupMonthStats(group, monthObj){
+  const daysInMonth = monthObj.daysInMonth();
+  let done=0, movedS=0, movedT=0, cancS=0, cancT=0;
+  for(let d=1; d<=daysInMonth; d++){
+    const dt = monthObj.date(d);
+    const scheduled = (group.schedule||[]).some(sc=>sc.day===dt.isoWeekday());
+    if(!scheduled) continue;
+    const iso = dt.format('YYYY-MM-DD');
+    const st = getStatus('group', group.id, iso);
+    if(st==='done') done++;
+    else if(st==='moved'){ const l=getLesson('group',group.id,iso); if(l?.initiator==='teacher') movedT++; else movedS++; }
+    else if(st==='cancelled'){ const l=getLesson('group',group.id,iso); if(l?.initiator==='teacher') cancT++; else cancS++; }
+  }
+  const members = membersOfGroup(group.id);
+  let paidAmount = 0, paidCount = 0;
+  members.forEach(m=>{
+    const pays = paymentsInMonthCached(m.id, monthObj);
+    paidCount += pays.reduce((a,p)=>a+p.count,0);
+    paidAmount += pays.reduce((a,p)=>a + (p.amount!==undefined&&p.amount!==null?p.amount:p.count*(m.price||0)), 0);
+  });
+  const salary = done * (group.teacher_rate||0);
+  const profitBeforeTax = paidAmount - salary;
+  const tax = paidAmount * 0.04;
+  const profitAfterTax = profitBeforeTax - tax;
+  return {done, movedS, movedT, cancS, cancT, paidCount, paidAmount, salary, profitBeforeTax, tax, profitAfterTax};
+}
+
+let expensesCache = [], incomesCache = [];
+async function fetchExpensesIncomes(){
+  const [{data:exp, error:e1}, {data:inc, error:e2}] = await Promise.all([
+    sb.from('expenses').select('*').order('date',{ascending:false}),
+    sb.from('incomes').select('*').order('date',{ascending:false}),
+  ]);
+  if(e1) toast('Ошибка загрузки расходов: '+e1.message);
+  if(e2) toast('Ошибка загрузки доходов: '+e2.message);
+  expensesCache = exp || []; incomesCache = inc || [];
+}
+
+async function renderAdminTab(){
+  if(session.role!=='admin') return;
+  document.getElementById('monthLabelAdmin').textContent = currentMonth.format('MMMM YYYY');
+  document.getElementById('adminSummaryTable').innerHTML = '<div class="loading-state">Загрузка…</div>';
+
+  const from = currentMonth.startOf('month').format('YYYY-MM-DD');
+  const to = currentMonth.endOf('month').format('YYYY-MM-DD');
+  await fetchLessonsForAllRange(from, to);
+  await fetchPaymentsForRange(from, to);
+  await fetchExpensesIncomes();
+
+  renderAdminSummaryTable();
+  renderExpensesList();
+  renderIncomesList();
+  renderTeacherFilterChips();
+  await renderChart();
+}
+
+function renderAdminSummaryTable(){
+  const container = document.getElementById('adminSummaryTable');
+  const daysInMonth = currentMonth.daysInMonth();
+  const today = dayjs().format('YYYY-MM-DD');
+  const tmpl = `190px repeat(${daysInMonth}, 26px) 60px 70px 60px 60px 60px 60px 90px 100px 90px 100px 100px 70px 110px 100px 90px 110px`;
+  const dash = `<div class="cell">—</div>`;
+
+  let head = `<div class="ledger-row head" style="grid-template-columns:${tmpl};"><div class="namecell">Преподаватель / ученик</div>`;
+  for(let d=1; d<=daysInMonth; d++){ const dt=currentMonth.date(d); head += `<div class="cell ${dt.isoWeekday()>=6?'weekend':''}">${d}<br>${DAY_NAMES[dt.isoWeekday()-1]}</div>`; }
+  head += `<div class="cell">Занятий</div><div class="cell">Опл.</div><div class="cell">Пер.(уч)</div><div class="cell">Пер.(пр)</div><div class="cell">Отм.(уч)</div><div class="cell">Отм.(пр)</div>
+    <div class="cell">Ставка</div><div class="cell">Зарплата</div><div class="cell">Цена уч.</div><div class="cell">Оплата мес.</div><div class="cell">Приб. до нал.</div><div class="cell">Налог 4%</div><div class="cell">Приб. после нал.</div>
+    <div class="cell">Прибыль (план)</div><div class="cell">Налог (план)</div><div class="cell">Прибыль после нал. (план)</div></div>`;
+
+  let body='';
+  let totalPaid=0, totalSalary=0, totalProfitBefore=0, totalTax=0, totalProfitAfter=0, totalDone=0;
+  let totalPlanProfit=0, totalPlanTax=0, totalPlanProfitAfter=0;
+
+  cache.teachers.forEach(t=>{
+    const individualStudents = studentsOfTeacher(t.id).filter(s=>!s.group_id);
+    const teacherGroups = groupsOfTeacher(t.id);
+    if(!individualStudents.length && !teacherGroups.length) return;
+    body += `<div class="ledger-row teacher-row" style="grid-template-columns:${tmpl};"><div class="namecell" style="grid-column:1/-1;">${escapeHtml(t.last_name)} ${escapeHtml(t.first_name)}</div></div>`;
+    let tPaid=0, tSalary=0, tProfitBefore=0, tTax=0, tProfitAfter=0, tDone=0;
+    let tPlanProfit=0, tPlanTax=0, tPlanProfitAfter=0;
+
+    individualStudents.forEach(s=>{
+      const stats = studentMonthStats(s, currentMonth);
+      const planRevenue = (s.price||0) * stats.done;
+      const planProfit = planRevenue - stats.salary; // = (цена - ставка) * занятий
+      const planTax = planRevenue * 0.04;
+      const planProfitAfter = planProfit - planTax;
+      let row = `<div class="namecell" style="padding-left:22px;">${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</div>`;
+      for(let d=1; d<=daysInMonth; d++){
+        const dt = currentMonth.date(d);
+        const iso = dt.format('YYYY-MM-DD');
+        const scheduled = (s.schedule||[]).some(sc=>sc.day===dt.isoWeekday());
+        const weekend = dt.isoWeekday()>=6;
+        const cellCls = ['cell']; if(weekend) cellCls.push('weekend'); if(iso===today) cellCls.push('today');
+        if(!scheduled){ row += `<div class="${cellCls.join(' ')}"><div class="daychip empty"></div></div>`; continue; }
+        const st = getStatus('student', s.id, iso);
+        row += `<div class="${cellCls.join(' ')}"><div class="daychip st-${st}" onclick="openStatusModal('student','${s.id}','${iso}')" title="${STATUS_LABEL[st]}">${st==='planned'?'·':st[0].toUpperCase()}</div></div>`;
+      }
+      row += `<div class="cell" style="font-weight:700;">${stats.done}</div>
+        <div class="cell" style="font-weight:700;cursor:pointer;text-decoration:underline dotted;" onclick="showPaymentsPopup('${s.id}')">${stats.paidCount}</div>
+        <div class="cell" style="cursor:pointer;text-decoration:underline dotted;" onclick="showBreakdownPopup('student','${s.id}','moved')">${stats.movedS}</div>
+        <div class="cell">${stats.movedT}</div>
+        <div class="cell" style="cursor:pointer;text-decoration:underline dotted;" onclick="showBreakdownPopup('student','${s.id}','cancelled')">${stats.cancS}</div>
+        <div class="cell">${stats.cancT}</div>
+        <div class="cell">${fmtMoney(s.teacher_rate)}</div>
+        <div class="cell" style="font-weight:700;">${fmtMoney(stats.salary)}</div>
+        <div class="cell">${fmtMoney(s.price)}</div>
+        <div class="cell" style="font-weight:700;">${fmtMoney(stats.paidAmount)}</div>
+        <div class="cell">${fmtMoney(stats.profitBeforeTax)}</div>
+        <div class="cell">${fmtMoney(stats.tax)}</div>
+        <div class="cell" style="font-weight:700;">${fmtMoney(stats.profitAfterTax)}</div>
+        <div class="cell">${fmtMoney(planProfit)}</div>
+        <div class="cell">${fmtMoney(planTax)}</div>
+        <div class="cell" style="font-weight:700;">${fmtMoney(planProfitAfter)}</div>`;
+      body += `<div class="ledger-row body" style="grid-template-columns:${tmpl};">${row}</div>`;
+      tPaid+=stats.paidAmount; tSalary+=stats.salary; tProfitBefore+=stats.profitBeforeTax; tTax+=stats.tax; tProfitAfter+=stats.profitAfterTax; tDone+=stats.done;
+      tPlanProfit+=planProfit; tPlanTax+=planTax; tPlanProfitAfter+=planProfitAfter;
+    });
+
+    teacherGroups.forEach(g=>{
+      const gStats = groupMonthStats(g, currentMonth);
+      const members = membersOfGroup(g.id);
+      const gPriceSum = members.reduce((a,m)=>a+(m.price||0),0);
+      const gPlanRevenue = gPriceSum * gStats.done;
+      const gPlanProfit = gPlanRevenue - gStats.salary;
+      const gPlanTax = gPlanRevenue * 0.04;
+      const gPlanProfitAfter = gPlanProfit - gPlanTax;
+      let row = `<div class="namecell" style="padding-left:22px;">👥 ${escapeHtml(g.name)}</div>`;
+      for(let d=1; d<=daysInMonth; d++){
+        const dt = currentMonth.date(d);
+        const iso = dt.format('YYYY-MM-DD');
+        const scheduled = (g.schedule||[]).some(sc=>sc.day===dt.isoWeekday());
+        const weekend = dt.isoWeekday()>=6;
+        const cellCls = ['cell']; if(weekend) cellCls.push('weekend'); if(iso===today) cellCls.push('today');
+        if(!scheduled){ row += `<div class="${cellCls.join(' ')}"><div class="daychip empty"></div></div>`; continue; }
+        const st = getStatus('group', g.id, iso);
+        row += `<div class="${cellCls.join(' ')}"><div class="daychip st-${st}" onclick="openStatusModal('group','${g.id}','${iso}')" title="${STATUS_LABEL[st]}">${st==='planned'?'·':st[0].toUpperCase()}</div></div>`;
+      }
+      row += `<div class="cell" style="font-weight:700;">${gStats.done}</div>
+        <div class="cell" style="font-weight:700;">${gStats.paidCount}</div>
+        <div class="cell" style="cursor:pointer;text-decoration:underline dotted;" onclick="showBreakdownPopup('group','${g.id}','moved')">${gStats.movedS}</div>
+        <div class="cell">${gStats.movedT}</div>
+        <div class="cell" style="cursor:pointer;text-decoration:underline dotted;" onclick="showBreakdownPopup('group','${g.id}','cancelled')">${gStats.cancS}</div>
+        <div class="cell">${gStats.cancT}</div>
+        <div class="cell">${fmtMoney(g.teacher_rate)}</div>
+        <div class="cell" style="font-weight:700;">${fmtMoney(gStats.salary)}</div>
+        <div class="cell">—</div>
+        <div class="cell" style="font-weight:700;">${fmtMoney(gStats.paidAmount)}</div>
+        <div class="cell">${fmtMoney(gStats.profitBeforeTax)}</div>
+        <div class="cell">${fmtMoney(gStats.tax)}</div>
+        <div class="cell" style="font-weight:700;">${fmtMoney(gStats.profitAfterTax)}</div>
+        <div class="cell">${fmtMoney(gPlanProfit)}</div>
+        <div class="cell">${fmtMoney(gPlanTax)}</div>
+        <div class="cell" style="font-weight:700;">${fmtMoney(gPlanProfitAfter)}</div>`;
+      body += `<div class="ledger-row body" style="grid-template-columns:${tmpl};background:var(--butter-soft);">${row}</div>`;
+
+      members.forEach(m=>{
+        const mPays = paymentsInMonthCached(m.id, currentMonth);
+        const mPaidAmount = mPays.reduce((a,p)=>a + (p.amount!==undefined&&p.amount!==null?p.amount:p.count*(m.price||0)), 0);
+        const mPaidCount = mPays.reduce((a,p)=>a+p.count,0);
+        let mrow = `<div class="namecell" style="padding-left:36px;color:var(--ink-light);">— ${escapeHtml(m.last_name)} ${escapeHtml(m.first_name)}</div>`;
+        for(let d=1; d<=daysInMonth; d++){
+          const dt = currentMonth.date(d);
+          const iso = dt.format('YYYY-MM-DD');
+          const weekend = dt.isoWeekday()>=6;
+          const cellCls = ['cell']; if(weekend) cellCls.push('weekend'); if(iso===today) cellCls.push('today');
+          mrow += `<div class="${cellCls.join(' ')}"><div class="daychip empty"></div></div>`;
+        }
+        mrow += `<div class="cell">—</div>
+          <div class="cell" style="cursor:pointer;text-decoration:underline dotted;" onclick="showPaymentsPopup('${m.id}')">${mPaidCount}</div>
+          <div class="cell">—</div><div class="cell">—</div><div class="cell">—</div><div class="cell">—</div>
+          <div class="cell">—</div><div class="cell">—</div>
+          <div class="cell">${fmtMoney(m.price)}</div>
+          <div class="cell">${fmtMoney(mPaidAmount)}</div>
+          <div class="cell">—</div><div class="cell">—</div><div class="cell">—</div>
+          <div class="cell">—</div><div class="cell">—</div><div class="cell">—</div>`;
+        body += `<div class="ledger-row body" style="grid-template-columns:${tmpl};">${mrow}</div>`;
+      });
+
+      tPaid+=gStats.paidAmount; tSalary+=gStats.salary; tProfitBefore+=gStats.profitBeforeTax; tTax+=gStats.tax; tProfitAfter+=gStats.profitAfterTax; tDone+=gStats.done;
+      tPlanProfit+=gPlanProfit; tPlanTax+=gPlanTax; tPlanProfitAfter+=gPlanProfitAfter;
+    });
+
+    let sumRow = `<div class="namecell">Итого по ${escapeHtml(t.last_name)}</div>`;
+    for(let d=1; d<=daysInMonth; d++) sumRow += `<div class="cell"></div>`;
+    sumRow += `<div class="cell">${tDone}</div><div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div>
+      <div class="cell">${fmtMoney(tSalary)}</div><div class="cell"></div><div class="cell">${fmtMoney(tPaid)}</div>
+      <div class="cell">${fmtMoney(tProfitBefore)}</div><div class="cell">${fmtMoney(tTax)}</div><div class="cell">${fmtMoney(tProfitAfter)}</div>
+      <div class="cell">${fmtMoney(tPlanProfit)}</div><div class="cell">${fmtMoney(tPlanTax)}</div><div class="cell">${fmtMoney(tPlanProfitAfter)}</div>`;
+    body += `<div class="ledger-row subtotal" style="grid-template-columns:${tmpl};">${sumRow}</div>`;
+    totalPaid+=tPaid; totalSalary+=tSalary; totalProfitBefore+=tProfitBefore; totalTax+=tTax; totalProfitAfter+=tProfitAfter; totalDone+=tDone;
+    totalPlanProfit+=tPlanProfit; totalPlanTax+=tPlanTax; totalPlanProfitAfter+=tPlanProfitAfter;
+  });
+
+  let foot = `<div class="namecell">Общая сводка</div>`;
+  for(let d=1; d<=daysInMonth; d++) foot += `<div class="cell"></div>`;
+  foot += `<div class="cell">${totalDone}</div><div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div>
+    <div class="cell">${fmtMoney(totalSalary)}</div><div class="cell"></div><div class="cell">${fmtMoney(totalPaid)}</div>
+    <div class="cell">${fmtMoney(totalProfitBefore)}</div><div class="cell">${fmtMoney(totalTax)}</div><div class="cell">${fmtMoney(totalProfitAfter)}</div>
+    <div class="cell">${fmtMoney(totalPlanProfit)}</div><div class="cell">${fmtMoney(totalPlanTax)}</div><div class="cell">${fmtMoney(totalPlanProfitAfter)}</div>`;
+
+  container.innerHTML = cache.teachers.length ?
+    `<div class="ledger" style="min-width:${210+daysInMonth*26+1000}px;">${head}${body}<div class="ledger-row foot" style="grid-template-columns:${tmpl};">${foot}</div></div>` :
+    `<div class="empty-state">Нет данных</div>`;
+
+  const otherExp = monthlyEquivalentTotal(expensesCache, currentMonth);
+  const otherInc = monthlyEquivalentTotal(incomesCache, currentMonth);
+  document.getElementById('adminStatCards').innerHTML = `
+    ${statCard('Оплата учениками', totalPaid)}
+    ${statCard('Зарплаты преподавателям', totalSalary)}
+    ${statCard('Другие доходы (за месяц)', otherInc)}
+    ${statCard('Другие расходы (за месяц)', otherExp)}
+    ${statCard('Прибыль до налога', totalProfitBefore + otherInc - otherExp, true)}
+    ${statCard('Налог (4% с оплат учеников)', totalTax)}
+    ${statCard('Прибыль после налога', totalProfitAfter + otherInc - otherExp, true)}
+  `;
+}
+function statCard(label, value, colorize){
+  const cls = colorize ? (value>=0?'pos':'neg') : '';
+  return `<div class="stat-card ${cls}"><div class="label">${label}</div><div class="value">${fmtMoney(value)}</div></div>`;
+}
+
+function showPaymentsPopup(studentId){
+  const s = getStudent(studentId);
+  const pays = paymentsInMonthCached(studentId, currentMonth);
+  openOverlay(`<div class="modal narrow">
+    <div class="modal-head"><h2>Оплаты — ${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+    <div class="simple-list">${pays.length? pays.map(p=>`<div class="simple-row"><span class="name">${dayjs(p.date).format('DD.MM.YYYY')}</span><span class="meta2">${p.count} занятий · ${escapeHtml(p.method||'')}${p.period_from?` · период ${dayjs(p.period_from).format('DD.MM')}–${dayjs(p.period_to).format('DD.MM.YYYY')}`:''}</span><span style="font-weight:700;">${fmtMoney(p.amount)}</span></div>`).join('') : '<div class="simple-row">Оплат в этом месяце нет</div>'}</div>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px;"><button class="btn ghost" onclick="closeOverlay()">Закрыть</button></div>
+  </div>`);
+}
+function showBreakdownPopup(kind, id, type){
+  const isGroup = kind==='group';
+  const entity = isGroup ? getGroup(id) : getStudent(id);
+  const name = isGroup ? '👥 '+entity.name : entity.last_name+' '+entity.first_name;
+  const daysInMonth = currentMonth.daysInMonth();
+  const rows = [];
+  for(let d=1; d<=daysInMonth; d++){
+    const dt = currentMonth.date(d);
+    const l = getLesson(kind, id, dt.format('YYYY-MM-DD'));
+    if(l && l.status===type) rows.push(l);
+  }
+  const label = type==='moved' ? 'Переносы' : 'Отмены';
+  openOverlay(`<div class="modal narrow">
+    <div class="modal-head"><h2>${label} — ${escapeHtml(name)}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+    <div class="simple-list">${rows.length? rows.map(l=>`<div class="simple-row"><span class="name">${dayjs(l.date).format('DD.MM.YYYY')}</span><span class="meta2">${l.initiator==='teacher'?'По инициативе преподавателя':'По инициативе ученика/группы'} · ${escapeHtml(l.reason||'')}${l.moved_to_date?' · перенесено на '+dayjs(l.moved_to_date).format('DD.MM.YYYY'):''}</span></div>`).join('') : `<div class="simple-row">Пока нет записей</div>`}</div>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px;"><button class="btn ghost" onclick="closeOverlay()">Закрыть</button></div>
+  </div>`);
+}
+
+/* ---------- Другие расходы / доходы ---------- */
+function monthlyEquivalent(item, monthObj){
+  if(item.type==='monthly') return item.amount;
+  if(item.type==='periodic') return item.amount / (item.interval_months||1);
+  if(item.type==='regular') return item.amount;
+  if(item.type==='one') return dayjs(item.date).format('YYYY-MM')===monthObj.format('YYYY-MM') ? item.amount : 0;
+  return 0;
+}
+function monthlyEquivalentTotal(list, monthObj){ return list.reduce((a,i)=>a+monthlyEquivalent(i,monthObj),0); }
+
+function renderExpensesList(){
+  const el = document.getElementById('expensesList');
+  el.innerHTML = expensesCache.length ? expensesCache.map(e=>`<div class="simple-row">
+    <span class="name">${escapeHtml(e.name)}</span>
+    <span class="meta2">${e.type==='one'?'Разовый':e.type==='monthly'?'Ежемесячный':'Периодический (раз в '+e.interval_months+' мес.)'}</span>
+    <span>${fmtMoney(e.amount)}</span><span class="meta2">≈ ${fmtMoney(monthlyEquivalent(e,currentMonth))}/мес</span>
+    <span><button class="btn sm ghost" onclick="openExpenseModal('${e.id}')">✎</button> <button class="btn sm ghost" onclick="deleteExpense('${e.id}')">✕</button></span>
+  </div>`).join('') : '<div class="simple-row">Расходов пока нет</div>';
+}
+function openExpenseModal(id){
+  const e = id ? expensesCache.find(x=>x.id===id) : {name:'',type:'monthly',amount:0,interval_months:1,date:dayjs().format('YYYY-MM-DD')};
+  openOverlay(`<div class="modal narrow">
+    <div class="modal-head"><h2>${id?'Изменить расход':'Новый расход'}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+    <div class="field"><label>Название</label><input id="exName" value="${escapeHtml(e.name)}"></div>
+    <div class="field"><label>Тип</label><select id="exType" onchange="toggleExInterval()">
+      <option value="one" ${e.type==='one'?'selected':''}>Разовый</option>
+      <option value="monthly" ${e.type==='monthly'?'selected':''}>Ежемесячный</option>
+      <option value="periodic" ${e.type==='periodic'?'selected':''}>Периодический</option>
+    </select></div>
+    <div class="field" id="exIntervalWrap" style="display:${e.type==='periodic'?'block':'none'};"><label>Раз в N месяцев</label><input type="number" id="exInterval" value="${e.interval_months||3}"></div>
+    <div class="field"><label>Дата</label><input type="date" id="exDate" value="${e.date||dayjs().format('YYYY-MM-DD')}"></div>
+    <div class="field"><label>Сумма (₽)</label><input type="number" id="exAmount" value="${e.amount||0}"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+      <button class="btn ghost" onclick="closeOverlay()">Отмена</button>
+      <button class="btn primary" onclick="saveExpense(${id?`'${id}'`:'null'})">Сохранить</button>
+    </div>
+  </div>`);
+}
+function toggleExInterval(){ document.getElementById('exIntervalWrap').style.display = document.getElementById('exType').value==='periodic' ? 'block':'none'; }
+async function saveExpense(id){
+  const data = {
+    name: document.getElementById('exName').value.trim(),
+    type: document.getElementById('exType').value,
+    interval_months: parseInt(document.getElementById('exInterval')?.value||1,10),
+    date: document.getElementById('exDate').value,
+    amount: parseFloat(document.getElementById('exAmount').value)||0,
+  };
+  let error;
+  if(id){ ({ error } = await sb.from('expenses').update(data).eq('id', id)); }
+  else { ({ error } = await sb.from('expenses').insert(data)); }
+  if(error){ toast('Ошибка: '+error.message); return; }
+  closeOverlay(); await fetchExpensesIncomes(); renderExpensesList(); renderAdminSummaryTable(); await renderChart();
+}
+async function deleteExpense(id){
+  const { error } = await sb.from('expenses').delete().eq('id', id);
+  if(error){ toast('Ошибка: '+error.message); return; }
+  await fetchExpensesIncomes(); renderExpensesList(); renderAdminSummaryTable(); await renderChart();
+}
+
+function renderIncomesList(){
+  const el = document.getElementById('incomesList');
+  el.innerHTML = incomesCache.length ? incomesCache.map(i=>`<div class="simple-row">
+    <span class="name">${escapeHtml(i.name)}</span>
+    <span class="meta2">${escapeHtml(i.source||'')} · ${i.type==='regular'?'Регулярный':'Разовый'}</span>
+    <span>${fmtMoney(i.amount)}</span><span class="meta2">≈ ${fmtMoney(monthlyEquivalent(i,currentMonth))}/мес</span>
+    <span><button class="btn sm ghost" onclick="openIncomeModal('${i.id}')">✎</button> <button class="btn sm ghost" onclick="deleteIncome('${i.id}')">✕</button></span>
+  </div>`).join('') : '<div class="simple-row">Доходов пока нет</div>';
+}
+function openIncomeModal(id){
+  const i = id ? incomesCache.find(x=>x.id===id) : {name:'',source:'',type:'one',amount:0,date:dayjs().format('YYYY-MM-DD')};
+  openOverlay(`<div class="modal narrow">
+    <div class="modal-head"><h2>${id?'Изменить доход':'Новый доход'}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+    <div class="field"><label>Наименование</label><input id="inName" value="${escapeHtml(i.name)}"></div>
+    <div class="field"><label>Источник</label><input id="inSource" value="${escapeHtml(i.source||'')}"></div>
+    <div class="field"><label>Тип</label><select id="inType">
+      <option value="one" ${i.type==='one'?'selected':''}>Разовый</option>
+      <option value="regular" ${i.type==='regular'?'selected':''}>Регулярный (ежемесячный)</option>
+    </select></div>
+    <div class="field"><label>Дата</label><input type="date" id="inDate" value="${i.date||dayjs().format('YYYY-MM-DD')}"></div>
+    <div class="field"><label>Сумма (₽)</label><input type="number" id="inAmount" value="${i.amount||0}"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+      <button class="btn ghost" onclick="closeOverlay()">Отмена</button>
+      <button class="btn primary" onclick="saveIncome(${id?`'${id}'`:'null'})">Сохранить</button>
+    </div>
+  </div>`);
+}
+async function saveIncome(id){
+  const data = {
+    name: document.getElementById('inName').value.trim(),
+    source: document.getElementById('inSource').value.trim(),
+    type: document.getElementById('inType').value,
+    date: document.getElementById('inDate').value,
+    amount: parseFloat(document.getElementById('inAmount').value)||0,
+  };
+  let error;
+  if(id){ ({ error } = await sb.from('incomes').update(data).eq('id', id)); }
+  else { ({ error } = await sb.from('incomes').insert(data)); }
+  if(error){ toast('Ошибка: '+error.message); return; }
+  closeOverlay(); await fetchExpensesIncomes(); renderIncomesList(); renderAdminSummaryTable(); await renderChart();
+}
+async function deleteIncome(id){
+  const { error } = await sb.from('incomes').delete().eq('id', id);
+  if(error){ toast('Ошибка: '+error.message); return; }
+  await fetchExpensesIncomes(); renderIncomesList(); renderAdminSummaryTable(); await renderChart();
+}
+
+/* ---------- График доходов/расходов (12 месяцев) ---------- */
+let activeTeacherFilters = null;
+let showIncomeLine = true, showExpenseLine = true;
+let chartInstance = null;
+
+function renderTeacherFilterChips(){
+  if(activeTeacherFilters===null) activeTeacherFilters = new Set(cache.teachers.map(t=>t.id));
+  const el = document.getElementById('teacherFilterChips');
+  el.innerHTML = `
+    <button class="filter-chip ${activeTeacherFilters.size===cache.teachers.length?'active':''}" onclick="selectAllTeacherFilters()">Все преподаватели</button>
+    ${cache.teachers.map(t=>`<button class="filter-chip ${activeTeacherFilters.has(t.id)?'active':''}" onclick="toggleTeacherFilter('${t.id}')">${escapeHtml(t.last_name)}</button>`).join('')}
+    <button class="filter-chip ${showIncomeLine?'active':''}" onclick="toggleLine('income')">Линия доходов</button>
+    <button class="filter-chip ${showExpenseLine?'active':''}" onclick="toggleLine('expense')">Линия расходов</button>
+  `;
+}
+function selectAllTeacherFilters(){ activeTeacherFilters = new Set(cache.teachers.map(t=>t.id)); renderTeacherFilterChips(); renderChart(); }
+function toggleTeacherFilter(id){
+  if(activeTeacherFilters.has(id)) activeTeacherFilters.delete(id); else activeTeacherFilters.add(id);
+  renderTeacherFilterChips(); renderChart();
+}
+function toggleLine(which){
+  if(which==='income') showIncomeLine=!showIncomeLine; else showExpenseLine=!showExpenseLine;
+  renderTeacherFilterChips(); renderChart();
+}
+
+async function renderChart(){
+  const months = [];
+  for(let i=11;i>=0;i--) months.push(currentMonth.subtract(i,'month'));
+  const rangeFrom = months[0].startOf('month').format('YYYY-MM-DD');
+  const rangeTo = months[months.length-1].endOf('month').format('YYYY-MM-DD');
+  await fetchLessonsForAllRange(rangeFrom, rangeTo);
+  await fetchPaymentsForRange(rangeFrom, rangeTo);
+
+  const incomeData = [], expenseData = [];
+  months.forEach(m=>{
+    let income=0, expense=0;
+    cache.students.forEach(s=>{
+      if(!activeTeacherFilters.has(s.teacher_id)) return;
+      const stats = studentMonthStats(s, m);
+      income += stats.paidAmount; expense += stats.salary;
+    });
+    cache.groups.forEach(g=>{
+      if(!activeTeacherFilters.has(g.teacher_id)) return;
+      const gStats = groupMonthStats(g, m);
+      expense += gStats.salary; // доходы группы уже учтены выше через paidAmount её участников
+    });
+    income += monthlyEquivalentTotal(incomesCache, m);
+    expense += monthlyEquivalentTotal(expensesCache, m);
+    incomeData.push(income); expenseData.push(expense);
+  });
+
+  // восстанавливаем кэш занятий/оплат к текущему выбранному месяцу
+  const from = currentMonth.startOf('month').format('YYYY-MM-DD');
+  const to = currentMonth.endOf('month').format('YYYY-MM-DD');
+  await fetchLessonsForAllRange(from, to);
+  await fetchPaymentsForRange(from, to);
+
+  const ctx = document.getElementById('incomeExpenseChart');
+  if(chartInstance) chartInstance.destroy();
+  const datasets = [];
+  if(showIncomeLine) datasets.push({label:'Доходы', data:incomeData, borderColor:'#3E8E5D', backgroundColor:'rgba(62,142,93,.12)', tension:.3, fill:true});
+  if(showExpenseLine) datasets.push({label:'Расходы', data:expenseData, borderColor:'#62131b', backgroundColor:'rgba(98,19,27,.08)', tension:.3, fill:true});
+  chartInstance = new Chart(ctx, {
+    type:'line',
+    data:{ labels: months.map(m=>m.format('MMM YYYY')), datasets },
+    options:{ responsive:true, plugins:{ legend:{position:'bottom'} }, scales:{ y:{ ticks:{ callback:v=>v.toLocaleString('ru-RU')+' ₽' } } } }
+  });
+}
+
+/* ==================================================================
+   9. ЭКСПОРТ В PDF / PNG
+   ================================================================== */
+function exportNodeAsPDF(nodeId, filename){
+  const node = document.getElementById(nodeId);
+  if(!node){ toast('Нечего экспортировать'); return; }
+  toast('Формируем PDF…');
+  html2pdf().set({
+    margin:8,
+    filename:filename+'-'+dayjs().format('YYYY-MM-DD')+'.pdf',
+    image:{type:'jpeg', quality:0.98},
+    html2canvas:{scale:2, useCORS:true},
+    jsPDF:{unit:'mm', format:'a3', orientation:'landscape'}
+  }).from(node).save();
+}
+function exportNodeAsPNG(nodeId, filename){
+  const node = document.getElementById(nodeId);
+  if(!node){ toast('Нечего экспортировать'); return; }
+  toast('Формируем PNG…');
+  html2canvas(node, {scale:2, useCORS:true}).then(canvas=>{
+    const link = document.createElement('a');
+    link.download = filename+'-'+dayjs().format('YYYY-MM-DD')+'.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  });
+}
+
+/* ==================================================================
+   10. ВХОД ПО КЛАВИШЕ ENTER
+   ================================================================== */
+document.addEventListener('DOMContentLoaded', ()=>{
+  ['loginEmail','loginPassword'].forEach(id=>{
+    document.getElementById(id).addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
+  });
+});
+
+/* Глобальный перехват необработанных ошибок — чтобы «тихие» сбои были видны, а не молчали */
+window.addEventListener('error', (e)=>{
+  console.error('Необработанная ошибка:', e.error || e.message);
+  if(document.getElementById('app') && document.getElementById('app').style.display!=='none') toast('Произошла ошибка: '+(e.message||'см. консоль браузера (F12)'));
+});
+window.addEventListener('unhandledrejection', (e)=>{
+  console.error('Необработанная ошибка (promise):', e.reason);
+  if(document.getElementById('app') && document.getElementById('app').style.display!=='none') toast('Произошла ошибка: '+(e.reason?.message||e.reason||'см. консоль браузера (F12)'));
+});
+
+</script>
+</body>
+</html>  --bg:#FBFAF8;
+  --panel:#FFFFFF;
+  --ink:#2B2224;
+  --ink-light:#8A7B7D;
+  --green:#3E8E5D;
+  --green-soft:#DFF1E5;
+  --red:#D6584D;
+  --red-soft:#FBE3E0;
+  --radius-lg:22px;
+  --radius-md:16px;
+  --radius-sm:10px;
+  --shadow:0 2px 6px rgba(98,19,27,.05), 0 10px 24px rgba(98,19,27,.06);
+  --font-display:'Rubik', sans-serif;
+  --font-body:'Play', sans-serif;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:var(--font-body);
+  font-size:14.5px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:700;margin:0 0 .35em;color:var(--wine);}
+h1{font-size:26px;}
+h2{font-size:18px;}
+h3{font-size:15px;}
+a{color:var(--wine);}
+button{font-family:var(--font-body);cursor:pointer;}
+input,select,textarea{font-family:var(--font-body);font-size:14px;}
+::selection{background:var(--pink-soft);}
+
+/* ---------- Кнопки ---------- */
+.btn{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:10px 16px;border-radius:999px;border:none;
+  background:var(--grey);color:var(--wine);font-size:13.5px;font-weight:700;
+  transition:.15s transform,.15s background,.15s box-shadow;
+}
+.btn:hover{transform:translateY(-1px);box-shadow:var(--shadow);}
+.btn:active{transform:translateY(0);}
+.btn.primary{background:var(--wine);color:#fff;}
+.btn.primary:hover{background:var(--wine-dark);}
+.btn.accent{background:var(--pink);color:var(--wine-dark);}
+.btn.accent:hover{background:#ea849e;}
+.btn.butter{background:var(--butter);color:var(--wine-dark);}
+.btn.ghost{background:transparent;color:var(--wine);}
+.btn.ghost:hover{background:var(--wine-soft);}
+.btn.danger{background:var(--red-soft);color:var(--red);}
+.btn.danger:hover{background:#f5c9c4;}
+.btn.sm{padding:6px 12px;font-size:12.5px;}
+.btn:disabled{opacity:.4;cursor:not-allowed;transform:none;box-shadow:none;}
+
+/* ---------- Экран входа ---------- */
+#loginScreen{
+  min-height:100vh;display:flex;align-items:center;justify-content:center;
+  background:
+    radial-gradient(circle at 12% 10%, rgba(238,153,175,.20), transparent 45%),
+    radial-gradient(circle at 88% 90%, rgba(246,222,122,.28), transparent 50%),
+    var(--bg);
+  padding:20px;
+}
+.login-card{
+  width:100%;max-width:400px;background:var(--panel);border-radius:28px;
+  padding:38px 34px;box-shadow:var(--shadow);
+}
+.login-card .eyebrow{font-family:var(--font-display);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--pink);font-weight:700;margin-bottom:6px;}
+.login-card h1{margin-bottom:4px;}
+.login-card p.sub{color:var(--ink-light);margin:0 0 26px;font-size:13.5px;}
+.field{margin-bottom:16px;}
+.field label{display:block;font-size:12.5px;font-weight:700;color:var(--ink-light);margin-bottom:5px;}
+.field input, .field select, .field textarea{
+  width:100%;padding:11px 13px;border:none;border-radius:var(--radius-sm);background:var(--grey);color:var(--ink);
+}
+.field input:focus, .field select:focus, .field textarea:focus{outline:2px solid var(--pink);background:#fff;}
+.login-msg{margin-top:12px;font-size:12.5px;color:var(--red);min-height:16px;}
+.login-hint{margin-top:18px;font-size:11.5px;color:var(--ink-light);line-height:1.5;}
+.spinner{width:16px;height:16px;border-radius:50%;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;animation:spin .7s linear infinite;display:inline-block;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+#app{display:none;min-height:100vh;}
+.shell{display:grid;grid-template-columns:230px 1fr;min-height:100vh;}
+.sidebar{
+  background:var(--wine);color:#F6E7E9;padding:24px 16px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;
+}
+.brand{display:flex;flex-direction:column;margin-bottom:24px;padding:0 8px;}
+.brand .eyebrow{font-family:var(--font-display);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--butter);font-weight:700;}
+.brand strong{font-family:var(--font-display);font-size:19px;color:#fff;}
+.nav-btn{
+  text-align:left;padding:11px 14px;border-radius:999px;border:none;background:transparent;color:#E9C9CF;
+  font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:9px;font-family:var(--font-body);
+}
+.nav-btn:hover{background:rgba(255,255,255,.08);color:#fff;}
+.nav-btn.active{background:var(--pink);color:var(--wine-dark);}
+.sidebar-foot{margin-top:auto;padding:14px 8px 0;border-top:1px solid rgba(255,255,255,.14);font-size:12px;color:#D9AEB4;}
+.sidebar-foot .who{color:#fff;font-weight:700;margin-bottom:8px;}
+
+.main{padding:28px 34px 70px;overflow-x:hidden;}
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;flex-wrap:wrap;gap:12px;}
+.topbar .titles p{margin:2px 0 0;color:var(--ink-light);font-size:13px;}
+.tab-panel{display:none;}
+.tab-panel.active{display:block;}
+
+.panel{background:var(--panel);border-radius:var(--radius-lg);padding:22px 24px;margin-bottom:20px;box-shadow:var(--shadow);}
+.panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:10px;flex-wrap:wrap;}
+.panel-head h2{margin:0;}
+.eyebrow-label{font-family:var(--font-display);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--pink);font-weight:700;margin-bottom:4px;display:block;}
+
+.grid-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;}
+.card{border-radius:var(--radius-md);padding:16px 18px;background:var(--grey);}
+.card h3{margin-bottom:2px;}
+.card .meta{font-size:12px;color:var(--ink-light);margin-bottom:10px;}
+.card .row{display:flex;justify-content:space-between;font-size:12.5px;padding:5px 0;}
+.card .row span:first-child{color:var(--ink-light);}
+.card .actions{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap;}
+.tag{display:inline-block;font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:999px;background:var(--pink-soft);color:var(--wine);letter-spacing:.02em;}
+
+.empty-state{padding:44px 20px;text-align:center;color:var(--ink-light);}
+.empty-state .glyph{font-size:32px;margin-bottom:8px;}
+.loading-state{padding:30px;text-align:center;color:var(--ink-light);font-size:13px;}
+
+/* ---------- Модалки ---------- */
+.overlay{position:fixed;inset:0;background:rgba(43,34,36,.45);display:none;align-items:center;justify-content:center;z-index:80;padding:20px;overflow-y:auto;}
+.overlay.show{display:flex;}
+.modal{background:#fff;border-radius:26px;max-width:580px;width:100%;max-height:88vh;overflow-y:auto;padding:26px 28px;box-shadow:0 24px 60px rgba(0,0,0,.28);}
+.modal.wide{max-width:760px;}
+.modal.narrow{max-width:400px;}
+.modal-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;}
+.modal-close{border:none;background:var(--grey);width:30px;height:30px;border-radius:50%;font-size:15px;color:var(--wine);}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px;}
+.form-grid .full{grid-column:1/-1;}
+.sched-row{display:flex;gap:8px;align-items:center;margin-bottom:6px;}
+.sched-row select,.sched-row input{padding:8px 10px;border:none;border-radius:var(--radius-sm);background:var(--grey);}
+.subtle-list{list-style:none;margin:0;padding:0;}
+.subtle-list li{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--grey);font-size:12.5px;}
+
+/* ---------- Данные без <table> — CSS-сетка ---------- */
+.ledger{border-radius:var(--radius-md);overflow:hidden;background:var(--grey);}
+.ledger-scroll{overflow-x:auto;}
+.ledger-row{display:grid;align-items:center;}
+.ledger-row.head{background:var(--wine);color:#fff;font-family:var(--font-display);font-size:11px;font-weight:700;padding:10px 0;border-radius:var(--radius-md) var(--radius-md) 0 0;}
+.ledger-row .cell{text-align:center;padding:4px 2px;font-size:11.5px;}
+.ledger-row .namecell{
+  text-align:left;padding-left:14px;font-weight:700;position:sticky;left:0;background:inherit;font-family:var(--font-body);
+}
+.ledger-row.body{background:#fff;border-bottom:1px solid var(--grey);}
+.ledger-row.body:nth-child(even){background:#FCFBF9;}
+.ledger-row.teacher-row{background:var(--wine-soft);font-family:var(--font-display);font-weight:700;padding:8px 0;}
+.ledger-row.teacher-row .namecell{background:var(--wine-soft);}
+.ledger-row.foot{background:var(--wine);color:#fff;font-weight:700;border-radius:0 0 var(--radius-md) var(--radius-md);padding:10px 0;}
+.ledger-row.foot .namecell{background:var(--wine);color:#fff;}
+.ledger-row.subtotal{background:var(--butter-soft);font-weight:700;}
+.ledger-row.subtotal .namecell{background:var(--butter-soft);}
+
+.daychip{width:26px;height:26px;border-radius:8px;margin:0 auto;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;cursor:pointer;}
+.daychip.empty{background:transparent;cursor:default;}
+.daychip.weekend{background:var(--butter-soft);}
+.daychip.today{outline:2px solid var(--pink);outline-offset:-2px;}
+.ledger-row .cell.weekend{background:var(--butter-soft);border-radius:6px;}
+.ledger-row .cell.today{background:var(--pink-soft);border-radius:6px;}
+.ledger-row.head .cell.weekend{background:rgba(255,255,255,.18);}
+.daychip.st-planned{background:var(--grey-dark);color:#fff;}
+.daychip.st-done{background:var(--green);color:#fff;}
+.daychip.st-moved{background:var(--butter);color:var(--wine-dark);}
+.daychip.st-cancelled{background:var(--red);color:#fff;}
+
+.month-nav{display:flex;align-items:center;gap:10px;}
+.month-nav .lbl{font-family:var(--font-display);font-weight:700;min-width:150px;text-align:center;text-transform:capitalize;color:var(--wine);}
+
+/* ---------- Недельный календарь ---------- */
+.week-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;}
+.week-day{border-radius:var(--radius-md);padding:10px;background:var(--grey);min-height:120px;}
+.week-day.today{background:var(--pink-soft);}
+.week-day .d-label{font-size:11px;color:var(--ink-light);margin-bottom:8px;font-weight:700;text-transform:uppercase;font-family:var(--font-display);}
+.lesson-block{border-radius:var(--radius-sm);padding:6px 9px;margin-bottom:6px;font-size:11.5px;font-weight:700;cursor:pointer;}
+.lesson-block.st-planned{background:#fff;color:var(--ink-light);}
+.lesson-block.st-done{background:var(--green-soft);color:var(--green);}
+.lesson-block.st-moved{background:var(--butter-soft);color:#9c7a0a;}
+.lesson-block.st-cancelled{background:var(--red-soft);color:var(--red);text-decoration:line-through;}
+.lesson-block small{display:block;font-weight:500;opacity:.8;}
+
+.status-picker{display:flex;gap:8px;margin:12px 0;flex-wrap:wrap;}
+.status-picker button{flex:1;min-width:90px;padding:10px;border-radius:999px;border:none;font-weight:700;font-size:12.5px;background:var(--grey);color:var(--ink);}
+.status-picker button.st-done.active{background:var(--green);color:#fff;}
+.status-picker button.st-moved.active{background:var(--butter);color:var(--wine-dark);}
+.status-picker button.st-cancelled.active{background:var(--red);color:#fff;}
+.status-picker button.st-planned.active{background:var(--grey-dark);color:#fff;}
+
+.badge-legend{display:flex;gap:16px;flex-wrap:wrap;margin:8px 0 16px;font-size:11.5px;color:var(--ink-light);}
+.badge-legend span{display:inline-flex;align-items:center;gap:6px;}
+.badge-legend i{width:11px;height:11px;border-radius:4px;display:inline-block;}
+
+.finance-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;}
+.stat-card{border-radius:var(--radius-md);padding:16px;background:var(--grey);}
+.stat-card .label{font-size:11px;color:var(--ink-light);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px;font-family:var(--font-display);}
+.stat-card .value{font-family:var(--font-display);font-size:21px;font-weight:800;color:var(--wine);}
+.stat-card.pos .value{color:var(--green);}
+.stat-card.neg .value{color:var(--red);}
+
+.filters-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
+.filter-chip{border:none;background:var(--grey);padding:7px 14px;border-radius:999px;font-size:12px;font-weight:700;color:var(--ink-light);}
+.filter-chip.active{background:var(--wine);color:#fff;}
+
+.simple-list{width:100%;}
+.simple-row{display:flex;justify-content:space-between;align-items:center;padding:10px 4px;border-bottom:1px solid var(--grey);font-size:12.5px;flex-wrap:wrap;gap:6px;}
+.simple-row .name{font-weight:700;}
+.simple-row .meta2{color:var(--ink-light);font-size:11.5px;}
+
+.toast{position:fixed;bottom:22px;right:22px;background:var(--wine);color:#fff;padding:12px 20px;border-radius:999px;font-size:13px;font-weight:700;box-shadow:var(--shadow);z-index:200;opacity:0;transform:translateY(8px);transition:.25s;}
+.toast.show{opacity:1;transform:translateY(0);}
+
+/* ---------- Квадратный отчёт для родителей ---------- */
+.report-square{
+  width:640px;height:640px;background:linear-gradient(160deg,#fff 0%,var(--pink-soft) 100%);
+  border-radius:28px;padding:36px;display:flex;flex-direction:column;gap:14px;
+  font-family:var(--font-body);
+}
+.report-square .r-eyebrow{font-family:var(--font-display);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--pink);font-weight:700;}
+.report-square h2{font-size:24px;margin:0;}
+.report-square .r-period{color:var(--ink-light);font-size:12.5px;margin-bottom:6px;}
+.report-stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.report-stat{background:#fff;border-radius:16px;padding:12px 14px;}
+.report-stat .l{font-size:10.5px;color:var(--ink-light);text-transform:uppercase;font-family:var(--font-display);}
+.report-stat .v{font-family:var(--font-display);font-size:20px;font-weight:800;color:var(--wine);}
+.report-goals{background:#fff;border-radius:16px;padding:14px;font-size:12.5px;flex:1;overflow:hidden;}
+.report-chart-wrap{background:#fff;border-radius:16px;padding:10px;}
+
+/* ---------- Пробники ОГЭ/ЕГЭ ---------- */
+.lvl-bad{background:var(--red-soft);color:var(--red);}
+.lvl-ok{background:#FBDCC6;color:#B85B1D;}
+.lvl-good{background:var(--butter-soft);color:#9C7318;}
+.lvl-excellent{background:var(--green-soft);color:var(--green);}
+.lvl-none{background:var(--grey);color:var(--ink-light);}
+.lvl-badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;}
+.exam-row{display:grid;grid-template-columns:1fr 70px 70px 130px;gap:6px;align-items:center;padding:5px 0;font-size:12.5px;}
+.exam-row.ege{grid-template-columns:1fr 60px 60px 60px 60px 60px 130px;}
+.exam-row.head{font-weight:700;color:var(--ink-light);font-size:11px;text-transform:uppercase;font-family:var(--font-display);}
+.exam-row input{width:100%;padding:6px 7px;border:none;border-radius:8px;background:var(--grey);text-align:center;}
+.exam-photo-thumb{display:inline-flex;align-items:center;gap:6px;background:var(--grey);border-radius:10px;padding:5px 10px;font-size:12px;margin:3px 6px 3px 0;}
+
+@media (max-width:880px){
+  .shell{grid-template-columns:1fr;}
+  .sidebar{position:relative;height:auto;flex-direction:row;flex-wrap:wrap;}
+  .sidebar-foot{display:none;}
+  .main{padding:18px;}
+  .form-grid{grid-template-columns:1fr;}
+  .week-grid{grid-template-columns:repeat(2,1fr);}
+  .report-square{width:100%;height:auto;aspect-ratio:1/1;padding:22px;}
+  .report-stats{grid-template-columns:1fr 1fr;}
+}
+</style>
+</head>
+<body>
+
+<!-- ============================ ЭКРАН ВХОДА ============================ -->
+<div id="loginScreen">
+  <div class="login-card">
+    <span class="eyebrow">School OS · Классный журнал</span>
+    <h1>Добро пожаловать</h1>
+    <p class="sub">Войдите по e-mail и паролю, которые выдал администратор.</p>
+
+    <div class="field">
+      <label for="loginEmail">E-mail</label>
+      <input type="email" id="loginEmail" autocomplete="username" placeholder="you@school.ru">
+    </div>
+    <div class="field">
+      <label for="loginPassword">Пароль</label>
+      <input type="password" id="loginPassword" autocomplete="current-password" placeholder="••••••••">
+    </div>
+
+    <button class="btn primary" style="width:100%;justify-content:center;padding:12px;" id="loginBtn" onclick="doLogin()">Войти</button>
+    <div class="login-msg" id="loginMsg"></div>
+    <p class="login-hint">Учётные записи создаёт администратор в Supabase. Доступ и данные видны только тем, у кого есть роль.</p>
+  </div>
+</div>
+
+<!-- ============================ ПРИЛОЖЕНИЕ ============================ -->
+<div id="app">
+<div class="shell">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="eyebrow">School OS</span>
+      <strong>Классный журнал</strong>
+    </div>
+    <nav id="navButtons"></nav>
+    <div class="sidebar-foot">
+      <div class="who" id="whoAmI"></div>
+      <button class="btn ghost sm" style="width:100%;color:#F1D6DA;" onclick="logout()">Выйти</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div class="titles">
+        <h1 id="pageTitle">—</h1>
+        <p id="pageSubtitle"></p>
+      </div>
+      <div id="topbarActions" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+    </div>
+
+    <!-- ---- Вкладка: Преподаватели ---- -->
+    <section class="tab-panel" id="tab-teachers">
+      <div class="panel">
+        <div class="panel-head">
+          <div><span class="eyebrow-label">Персонал</span><h2>Преподаватели</h2></div>
+          <button class="btn accent" onclick="openTeacherModal()">+ Добавить преподавателя</button>
+        </div>
+        <div class="grid-cards" id="teachersGrid"><div class="loading-state">Загрузка…</div></div>
+      </div>
+    </section>
+
+    <!-- ---- Вкладка: Ученики ---- -->
+    <section class="tab-panel" id="tab-students">
+      <div class="panel">
+        <div class="panel-head">
+          <div><span class="eyebrow-label">Ученики</span><h2 id="studentsHeading">Ученики</h2></div>
+          <button class="btn accent" id="addStudentBtn" onclick="openStudentModal()">+ Добавить ученика</button>
+        </div>
+        <div class="grid-cards" id="studentsGrid"><div class="loading-state">Загрузка…</div></div>
+      </div>
+    </section>
+
+    <!-- ---- Вкладка: Расписание ---- -->
+    <section class="tab-panel" id="tab-schedule">
+      <div class="panel">
+        <div class="panel-head">
+          <div><span class="eyebrow-label">Неделя</span><h2 id="scheduleWeekLabel">Расписание</h2></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <select id="scheduleTeacherSelect" onchange="onScheduleTeacherChange()" style="display:none;padding:8px 12px;border-radius:999px;border:none;background:var(--grey);"></select>
+            <button class="btn ghost sm" onclick="shiftWeek(-1)">‹ Пред. неделя</button>
+            <button class="btn ghost sm" onclick="shiftWeek(0)">Сегодня</button>
+            <button class="btn ghost sm" onclick="shiftWeek(1)">След. неделя ›</button>
+          </div>
+        </div>
+        <div class="badge-legend">
+          <span><i style="background:var(--green);"></i>Состоялось</span>
+          <span><i style="background:var(--butter);"></i>Перенесено</span>
+          <span><i style="background:var(--red);"></i>Отменено</span>
+          <span><i style="background:var(--grey-dark);"></i>Запланировано</span>
+        </div>
+        <div class="week-grid" id="weekGrid"><div class="loading-state">Загрузка…</div></div>
+      </div>
+
+      <div class="panel" id="monthSummaryPanel">
+        <div class="panel-head">
+          <div><span class="eyebrow-label">Сводная ведомость</span><h2>Занятия за месяц</h2></div>
+          <div class="month-nav">
+            <button class="btn ghost sm" onclick="shiftMonth(-1)">‹</button>
+            <span class="lbl" id="monthLabel"></span>
+            <button class="btn ghost sm" onclick="shiftMonth(1)">›</button>
+            <button class="btn ghost sm" onclick="exportNodeAsPDF('teacherMonthTable','svodka-mesyats')">⭳ PDF</button>
+            <button class="btn ghost sm" onclick="exportNodeAsPNG('teacherMonthTable','svodka-mesyats')">⭳ PNG</button>
+          </div>
+        </div>
+        <div class="ledger-scroll" id="teacherMonthTable"><div class="loading-state">Загрузка…</div></div>
+      </div>
+    </section>
+
+    <!-- ---- Вкладка: Админ-сводка ---- -->
+    <section class="tab-panel" id="tab-admin">
+      <div class="panel">
+        <div class="panel-head">
+          <div><span class="eyebrow-label">Финансовая ведомость</span><h2>Сводка по месяцам</h2></div>
+          <div class="month-nav">
+            <button class="btn ghost sm" onclick="shiftMonth(-1)">‹</button>
+            <span class="lbl" id="monthLabelAdmin"></span>
+            <button class="btn ghost sm" onclick="shiftMonth(1)">›</button>
+            <button class="btn ghost sm" onclick="exportNodeAsPDF('adminSummaryTable','svodka-admin')">⭳ PDF</button>
+            <button class="btn ghost sm" onclick="exportNodeAsPNG('adminSummaryTable','svodka-admin')">⭳ PNG</button>
+          </div>
+        </div>
+        <div class="ledger-scroll" id="adminSummaryTable"><div class="loading-state">Загрузка…</div></div>
+      </div>
+
+      <div class="panel"><div class="finance-grid" id="adminStatCards"></div></div>
+
+      <div class="panel">
+        <div class="panel-head"><div><span class="eyebrow-label">Расходы и доходы</span><h2>Другие расходы</h2></div>
+          <button class="btn accent sm" onclick="openExpenseModal()">+ Добавить расход</button></div>
+        <div class="simple-list" id="expensesList"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><div><h2>Другие доходы</h2></div>
+          <button class="btn accent sm" onclick="openIncomeModal()">+ Добавить доход</button></div>
+        <div class="simple-list" id="incomesList"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><div><span class="eyebrow-label">Динамика</span><h2>Доходы и расходы по месяцам</h2></div>
+          <button class="btn ghost sm" onclick="exportNodeAsPDF('chartReportBlock','otchet-dinamika')">⭳ Отчёт в PDF</button></div>
+        <div class="filters-row" id="teacherFilterChips"></div>
+        <div id="chartReportBlock"><canvas id="incomeExpenseChart" height="90"></canvas></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+</div>
+
+<!-- ============================ МОДАЛКИ ============================ -->
+<div class="overlay" id="overlayRoot"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ==================================================================
+   1. SUPABASE — ИНИЦИАЛИЗАЦИЯ
+   ================================================================== */
+const SUPABASE_URL = 'https://gnfrivvybtolymdahcmk.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImduZnJpdnZ5YnRvbHltZGFoY21rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc5NjYxNjEsImV4cCI6MjEwMzU0MjE2MX0.WqX7yptEoT3vsOGXEkaJNg25V9Bb6VoJKSfETFdEKas';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+dayjs.extend(dayjs_plugin_isoWeek);
+dayjs.locale('ru');
+
+const DAY_NAMES = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']; // isoWeekday 1..7
+const CHANNELS = ['WhatsApp','Telegram','Звонок','Viber','Email','Макс'];
+const STATUS_LABEL = {planned:'Запланировано', done:'Состоялось', moved:'Перенесено', cancelled:'Отменено'};
+
+/* ---------- Пробники ОГЭ/ЕГЭ ---------- */
+const TASKS_OGE = ['Аудирование 1','Аудирование 2','Аудирование 3','Чтение 1','Чтение 2','Грамматика','Словообразование','Письмо','Устная часть 1','Устная часть 2','Устная часть 3'];
+const OGE_DEFAULT_MAX = {'Аудирование 1':4,'Аудирование 2':5,'Аудирование 3':6,'Чтение 1':6,'Чтение 2':7,'Грамматика':9,'Словообразование':6,'Письмо':10,'Устная часть 1':2,'Устная часть 2':6,'Устная часть 3':7};
+const TASKS_EGE = ['Аудирование 1','Аудирование 2','Аудирование 3','Чтение 1','Чтение 2','Чтение 3','Грамматика','Словообразование','Лексика','Письмо','Эссе','Устная часть 1','Устная часть 2','Устная часть 3','Устная часть 4'];
+const EGE_DEFAULT_MAX = {'Аудирование 1':2,'Аудирование 2':3,'Аудирование 3':7,'Чтение 1':3,'Чтение 2':2,'Чтение 3':7,'Грамматика':6,'Словообразование':5,'Лексика':7,'Письмо':6,'Эссе':14,'Устная часть 1':1,'Устная часть 2':4,'Устная часть 3':5,'Устная часть 4':10};
+// Таблица перевода первичного балла ЕГЭ в тестовый (индекс = первичный балл)
+const EGE_SCALE = [0,2,3,4,5,7,8,9,10,11,13,14,15,16,18,19,20,21,22,24,25,26,27,28,29,30,31,32,33,34,36,37,38,39,40,41,42,43,44,45,46,48,49,50,51,52,53,54,55,56,57,58,60,61,62,63,64,65,66,67,68,69,70,71,73,74,75,76,77,78,79,80,81,82,84,86,88,90,92,94,96,98,100];
+function ogeGrade(total){
+  if(total<=28) return '2';
+  if(total<=45) return '3';
+  if(total<=57) return '4';
+  return '5';
+}
+function egeTestScore(primary){
+  if(primary<=0) return 0;
+  if(primary>=EGE_SCALE.length) return 100;
+  return EGE_SCALE[primary];
+}
+function taskLevel(score, max){
+  if(!max || max<=0) return {label:'—', cls:'lvl-none'};
+  if(score<=0) return {label:'Плохо', cls:'lvl-bad'};
+  if(score>=max) return {label:'Отлично', cls:'lvl-excellent'};
+  const ratio = score/max;
+  return ratio>=0.5 ? {label:'Хорошо', cls:'lvl-good'} : {label:'Удовлетворительно', cls:'lvl-ok'};
+}
+
+function uid(){ return crypto.randomUUID ? crypto.randomUUID() : 'id-'+Math.random().toString(36).slice(2); }
+function escapeHtml(str){
+  if(str===undefined || str===null) return '';
+  return String(str).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+function fmtMoney(n){ return (Math.round(n||0)).toLocaleString('ru-RU') + ' ₽'; }
+function toast(msg){
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(window.__toastTimer);
+  window.__toastTimer = setTimeout(()=>el.classList.remove('show'), 2800);
+}
+function openOverlay(html){
+  const root = document.getElementById('overlayRoot');
+  root.innerHTML = html;
+  root.classList.add('show');
+  root.onclick = (e)=>{ if(e.target===root) closeOverlay(); };
+}
+function closeOverlay(){
+  document.getElementById('overlayRoot').classList.remove('show');
+  document.getElementById('overlayRoot').innerHTML='';
+}
+
+/* ==================================================================
+   2. СЕССИЯ / АВТОРИЗАЦИЯ
+   ================================================================== */
+let session = null; // {role:'admin'|'teacher', userId, teacher:{...}|null, email}
+
+async function doLogin(){
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const msg = document.getElementById('loginMsg');
+  const btn = document.getElementById('loginBtn');
+  msg.textContent = '';
+  if(!email || !password){ msg.textContent = 'Введите e-mail и пароль'; return; }
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Входим…';
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
+  btn.disabled = false; btn.innerHTML = 'Войти';
+  if(error){ msg.textContent = 'Не удалось войти: ' + (error.message==='Invalid login credentials' ? 'неверный e-mail или пароль' : error.message); return; }
+  await establishSession(data.user);
+}
+
+async function establishSession(user){
+  if(!user){ logout(); return; }
+  // проверяем, администратор ли пользователь
+  const { data: adminRow } = await sb.from('admins').select('id').eq('id', user.id).maybeSingle();
+  if(adminRow){
+    session = { role:'admin', userId:user.id, email:user.email, teacher:null };
+  } else {
+    const { data: teacherRow, error: tErr } = await sb.from('teachers').select('*').eq('id', user.id).maybeSingle();
+    if(!teacherRow){
+      document.getElementById('loginMsg').textContent = 'У этой учётной записи нет назначенной роли. Обратитесь к администратору.';
+      await sb.auth.signOut();
+      return;
+    }
+    session = { role:'teacher', userId:user.id, email:user.email, teacher:teacherRow };
+  }
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('app').style.display='block';
+  await initApp();
+}
+
+async function logout(){
+  await sb.auth.signOut();
+  session = null;
+  teardownRealtime();
+  document.getElementById('app').style.display='none';
+  document.getElementById('loginScreen').style.display='flex';
+  document.getElementById('loginEmail').value='';
+  document.getElementById('loginPassword').value='';
+}
+
+// восстановление сессии при обновлении страницы
+sb.auth.onAuthStateChange((event, sess)=>{
+  if(event==='SIGNED_OUT'){ return; }
+});
+(async function bootstrap(){
+  const { data } = await sb.auth.getSession();
+  if(data?.session?.user){ await establishSession(data.session.user); }
+})();
+
+/* ==================================================================
+   3. НАВИГАЦИЯ / ВКЛАДКИ
+   ================================================================== */
+let activeTab = 'teachers';
+const TABS_ADMIN = [
+  {id:'teachers', label:'Преподаватели', icon:'👤'},
+  {id:'students', label:'Ученики', icon:'🎓'},
+  {id:'schedule', label:'Расписание', icon:'🗓'},
+  {id:'admin', label:'Сводка по месяцам', icon:'💠'},
+];
+const TABS_TEACHER = [
+  {id:'students', label:'Мои ученики', icon:'🎓'},
+  {id:'schedule', label:'Моё расписание', icon:'🗓'},
+];
+
+let cache = { teachers:[], students:[], groups:[] };
+let currentTeacherForSchedule = null;
+
+async function initApp(){
+  document.getElementById('whoAmI').textContent = (session.role==='admin' ? 'Администратор' : (session.teacher.last_name+' '+session.teacher.first_name)) ;
+  const tabs = session.role==='admin' ? TABS_ADMIN : TABS_TEACHER;
+  document.getElementById('navButtons').innerHTML = tabs.map(t=>
+    `<button class="nav-btn" id="nav-${t.id}" onclick="switchTab('${t.id}')"><span>${t.icon}</span>${t.label}</button>`
+  ).join('');
+  document.getElementById('scheduleTeacherSelect').style.display = session.role==='admin' ? 'inline-block':'none';
+
+  await refreshTeachers();
+  await refreshStudents();
+  await refreshGroups();
+
+  currentTeacherForSchedule = session.role==='admin' ? (cache.teachers[0]?.id || null) : session.userId;
+  if(session.role==='admin') populateScheduleTeacherSelect();
+
+  setupRealtime();
+  switchTab(tabs[0].id);
+}
+
+function switchTab(id){
+  activeTab = id;
+  const tabs = session.role==='admin' ? TABS_ADMIN : TABS_TEACHER;
+  tabs.forEach(t=>{ document.getElementById('nav-'+t.id)?.classList.toggle('active', t.id===id); });
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById('tab-'+id).classList.add('active');
+  const titles = {
+    teachers:['Преподаватели','Карточки, контакты, группы и назначение учеников'],
+    students:[session.role==='admin'?'Ученики':'Мои ученики', session.role==='admin' ? 'Полная информация об учениках школы' : 'Ваши ученики: расписание, программа, отчёты'],
+    schedule:[session.role==='admin'?'Расписание преподавателя':'Моё расписание','Неделя, статусы занятий, сводная ведомость за месяц'],
+    admin:['Сводка по месяцам','Зарплаты, оплаты, прибыль, расходы и доходы школы'],
+  };
+  document.getElementById('pageTitle').textContent = titles[id][0];
+  document.getElementById('pageSubtitle').textContent = titles[id][1];
+
+  if(id==='teachers') renderTeachers();
+  if(id==='students') renderStudents();
+  if(id==='schedule') renderScheduleTab();
+  if(id==='admin') renderAdminTab();
+}
+
+/* ==================================================================
+   4. ЗАГРУЗКА ДАННЫХ (кэш + realtime автообновление)
+   ================================================================== */
+async function refreshTeachers(){
+  const { data, error } = await sb.from('teachers').select('*').order('last_name');
+  if(error){ toast('Ошибка загрузки преподавателей: '+error.message); return; }
+  cache.teachers = data || [];
+}
+async function refreshStudents(){
+  let q = sb.from('students').select('*').order('last_name');
+  if(session.role==='teacher') q = q.eq('teacher_id', session.userId);
+  const { data, error } = await q;
+  if(error){ toast('Ошибка загрузки учеников: '+error.message); return; }
+  cache.students = data || [];
+}
+async function refreshGroups(){
+  let q = sb.from('groups').select('*').order('name');
+  if(session.role==='teacher') q = q.eq('teacher_id', session.userId);
+  const { data, error } = await q;
+  if(error){ toast('Ошибка загрузки групп: '+error.message); return; }
+  cache.groups = data || [];
+}
+function teacherName(id){
+  const t = cache.teachers.find(x=>x.id===id);
+  return t ? (t.last_name+' '+t.first_name) : '—';
+}
+function studentsOfTeacher(teacherId){ return cache.students.filter(s=>s.teacher_id===teacherId); }
+function groupsOfTeacher(teacherId){ return cache.groups.filter(g=>g.teacher_id===teacherId); }
+function visibleStudents(){ return session.role==='admin' ? cache.students : studentsOfTeacher(session.userId); }
+function getStudent(id){ return cache.students.find(s=>s.id===id); }
+function getGroup(id){ return cache.groups.find(g=>g.id===id); }
+function membersOfGroup(groupId){ return cache.students.filter(s=>s.group_id===groupId); }
+function isGrouped(student){ return !!student.group_id; }
+
+/* ---------- Realtime: автообновление между устройствами ---------- */
+let rtChannel = null;
+function setupRealtime(){
+  teardownRealtime();
+  rtChannel = sb.channel('school-live')
+    .on('postgres_changes', {event:'*', schema:'public', table:'lessons'}, onRemoteChange('schedule'))
+    .on('postgres_changes', {event:'*', schema:'public', table:'reports'}, onRemoteChange('students'))
+    .on('postgres_changes', {event:'*', schema:'public', table:'payments'}, onRemoteChange('admin'))
+    .on('postgres_changes', {event:'*', schema:'public', table:'students'}, onRemoteChange('students', true))
+    .on('postgres_changes', {event:'*', schema:'public', table:'teachers'}, onRemoteChange('teachers', true))
+    .on('postgres_changes', {event:'*', schema:'public', table:'groups'}, onRemoteChange('teachers', true))
+    .on('postgres_changes', {event:'*', schema:'public', table:'mock_exams'}, onRemoteChange('students'))
+    .on('postgres_changes', {event:'*', schema:'public', table:'expenses'}, onRemoteChange('admin'))
+    .on('postgres_changes', {event:'*', schema:'public', table:'incomes'}, onRemoteChange('admin'))
+    .subscribe();
+}
+function teardownRealtime(){ if(rtChannel){ sb.removeChannel(rtChannel); rtChannel=null; } }
+let rtDebounce = null;
+function onRemoteChange(relevantTab, needsCoreRefresh){
+  return async ()=>{
+    clearTimeout(rtDebounce);
+    rtDebounce = setTimeout(async ()=>{
+      if(needsCoreRefresh){ await refreshTeachers(); await refreshStudents(); await refreshGroups(); }
+      // всегда безопасно перерисовать активную вкладку — данные внутри неё подгружаются заново
+      if(activeTab==='teachers') renderTeachers();
+      else if(activeTab==='students') renderStudents();
+      else if(activeTab==='schedule') renderScheduleTab();
+      else if(activeTab==='admin') renderAdminTab();
+    }, 400);
+  };
+}
+
+/* ==================================================================
+   5. ПРЕПОДАВАТЕЛИ (только администратор редактирует)
+   ================================================================== */
+function renderTeachers(){
+  const grid = document.getElementById('teachersGrid');
+  if(cache.teachers.length===0){
+    grid.innerHTML = `<div class="empty-state"><div class="glyph">👤</div>Пока нет преподавателей.</div>`;
+    return;
+  }
+  grid.innerHTML = cache.teachers.map(t=>{
+    const students = studentsOfTeacher(t.id);
+    const groups = groupsOfTeacher(t.id);
+    return `<div class="card">
+      <span class="tag">${escapeHtml(t.channel||'')}</span>
+      <h3>${escapeHtml(t.last_name)} ${escapeHtml(t.first_name)}</h3>
+      <div class="meta">Д.р. ${t.birth_date ? dayjs(t.birth_date).format('DD.MM.YYYY') : '—'} · ${escapeHtml(t.phone||'—')}</div>
+      <div class="row"><span>Учеников</span><span>${students.length}</span></div>
+      <div class="row"><span>Групп</span><span>${groups.length}</span></div>
+      <div class="row"><span>Телефон для связи (оплата)</span><span>${escapeHtml(t.payment_phone||'—')}</span></div>
+      <div class="row"><span>Банк оплаты</span><span>${escapeHtml(t.payment_bank||'—')}</span></div>
+      <div class="actions">
+        <button class="btn sm" onclick="openTeacherModal('${t.id}')">Изменить</button>
+        <button class="btn sm ghost" onclick="openTeacherGroupsModal('${t.id}')">Ученики и группы</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function openTeacherModal(id){
+  const t = id ? cache.teachers.find(x=>x.id===id) : null;
+  openOverlay(`<div class="modal">
+    <div class="modal-head"><h2>${id?'Изменить преподавателя':'Новый преподаватель'}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+    ${!id ? `<p style="color:var(--ink-light);margin-top:-8px;">Сначала создайте учётную запись преподавателя в Supabase (Authentication → Users), затем вставьте её ID сюда — это свяжет вход по e-mail/паролю с карточкой.</p>
+    <div class="field full"><label>ID учётной записи (UUID из Supabase Auth)</label><input id="tId" placeholder="00000000-0000-0000-0000-000000000000"></div>` : ''}
+    <div class="form-grid">
+      <div class="field"><label>Фамилия</label><input id="tLastName" value="${escapeHtml(t?.last_name||'')}"></div>
+      <div class="field"><label>Имя</label><input id="tFirstName" value="${escapeHtml(t?.first_name||'')}"></div>
+      <div class="field"><label>Дата рождения</label><input type="date" id="tBirth" value="${t?.birth_date||''}"></div>
+      <div class="field"><label>Телефон</label><input id="tPhone" value="${escapeHtml(t?.phone||'')}"></div>
+      <div class="field full"><label>Канал связи</label>
+        <select id="tChannel">${CHANNELS.map(c=>`<option ${t?.channel===c?'selected':''}>${c}</option>`).join('')}</select>
+      </div>
+      <div class="field"><label>Телефон для связи (оплата/СБП)</label><input id="tPaymentPhone" value="${escapeHtml(t?.payment_phone||'')}" placeholder="+7 900 000-00-00"></div>
+      <div class="field"><label>Банк оплаты</label><input id="tPaymentBank" value="${escapeHtml(t?.payment_bank||'')}" placeholder="Напр. Сбербанк"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end;">
+      <button class="btn ghost" onclick="closeOverlay()">Отмена</button>
+      <button class="btn primary" onclick="saveTeacher(${id?`'${id}'`:'null'})">Сохранить</button>
+    </div>
+  </div>`);
+}
+async function saveTeacher(id){
+  const data = {
+    last_name: document.getElementById('tLastName').value.trim(),
+    first_name: document.getElementById('tFirstName').value.trim(),
+    birth_date: document.getElementById('tBirth').value || null,
+    phone: document.getElementById('tPhone').value.trim(),
+    channel: document.getElementById('tChannel').value,
+    payment_phone: document.getElementById('tPaymentPhone').value.trim(),
+    payment_bank: document.getElementById('tPaymentBank').value.trim(),
+  };
+  if(!data.last_name || !data.first_name){ toast('Укажите фамилию и имя'); return; }
+  let error;
+  if(id){
+    ({ error } = await sb.from('teachers').update(data).eq('id', id));
+  } else {
+    const newId = document.getElementById('tId').value.trim();
+    if(!newId){ toast('Укажите ID учётной записи из Supabase Auth'); return; }
+    ({ error } = await sb.from('teachers').insert({ id:newId, ...data }));
+  }
+  if(error){ toast('Ошибка сохранения: '+error.message); return; }
+  await refreshTeachers(); closeOverlay(); renderTeachers(); toast('Сохранено');
+}
+
+/* ---------- Ученики и группы преподавателя ---------- */
+function openTeacherGroupsModal(id){
+  const t = cache.teachers.find(x=>x.id===id);
+  const individualStudents = studentsOfTeacher(id).filter(s=>!s.group_id);
+  const groups = groupsOfTeacher(id);
+  const unassigned = cache.students.filter(s=>s.teacher_id!==id && !s.group_id);
+  openOverlay(`<div class="modal wide">
+    <div class="modal-head"><h2>${escapeHtml(t.last_name)} ${escapeHtml(t.first_name)} — ученики и группы</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+
+    <h3>Группы</h3>
+    <ul class="subtle-list">
+      ${groups.length ? groups.map(g=>`<li><span>${escapeHtml(g.name)} <span style="color:var(--ink-light);">(${membersOfGroup(g.id).length} чел., занятие ${g.duration||60} мин, ${scheduleShortLabel(g.schedule)})</span></span>
+        <span><button class="btn sm ghost" onclick="openGroupModal('${g.id}','${id}')">Открыть</button></span></li>`).join('') : '<li>Групп пока нет</li>'}
+    </ul>
+    <div style="margin-top:8px;">
+      <button class="btn sm accent" onclick="openGroupModal(null,'${id}')">+ Создать группу</button>
+    </div>
+
+    <h3 style="margin-top:22px;">Индивидуальные ученики</h3>
+    <ul class="subtle-list">
+      ${individualStudents.length ? individualStudents.map(s=>`<li><span>${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</span>
+        <button class="btn sm ghost" onclick="unassignStudent('${s.id}','${id}')">Открепить от преподавателя</button></li>`).join('') : '<li>Пока нет</li>'}
+    </ul>
+
+    ${unassigned.length ? `<div class="field" style="margin-top:12px;">
+      <label>Прикрепить существующего (индивидуального) ученика к этому преподавателю</label>
+      <div style="display:flex;gap:8px;">
+        <select id="addExistingStudentSel" style="flex:1;">${unassigned.map(s=>`<option value="${s.id}">${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</option>`).join('')}</select>
+        <button class="btn sm accent" onclick="assignStudent('${id}')">Добавить</button>
+      </div>
+    </div>` : ''}
+
+    <div style="display:flex;justify-content:flex-end;margin-top:18px;">
+      <button class="btn ghost" onclick="closeOverlay()">Закрыть</button>
+    </div>
+  </div>`);
+}
+async function assignStudent(teacherId){
+  const sel = document.getElementById('addExistingStudentSel');
+  const { error } = await sb.from('students').update({teacher_id:teacherId, group_id:null}).eq('id', sel.value);
+  if(error){ toast('Ошибка: '+error.message); return; }
+  await refreshStudents(); openTeacherGroupsModal(teacherId);
+}
+async function unassignStudent(studentId, teacherId){
+  const { error } = await sb.from('students').update({teacher_id:null, group_id:null}).eq('id', studentId);
+  if(error){ toast('Ошибка: '+error.message); return; }
+  await refreshStudents(); openTeacherGroupsModal(teacherId);
+}
+
+/* ---------- Карточка группы ---------- */
+function openGroupModal(groupId, teacherId){
+  const g = groupId ? getGroup(groupId) : {name:'', duration:60, schedule:[{day:1,time:'16:00'}], teacher_rate:0, goals:''};
+  teacherId = teacherId || g.teacher_id;
+  const members = groupId ? membersOfGroup(groupId) : [];
+  const candidates = cache.students.filter(s=>s.teacher_id===teacherId && (!s.group_id || s.group_id===groupId));
+  openOverlay(`<div class="modal wide">
+    <div class="modal-head"><h2>${groupId?'Группа: '+escapeHtml(g.name):'Новая группа'}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+    <div class="form-grid">
+      <div class="field full"><label>Название группы</label><input id="gName" value="${escapeHtml(g.name)}" placeholder="Напр. «Подростки А2»"></div>
+      <div class="field"><label>Длительность занятия</label>
+        <select id="gDuration">${[30,45,60,90].map(m=>`<option value="${m}" ${g.duration==m?'selected':''}>${m} минут</option>`).join('')}</select>
+      </div>
+      <div class="field"><label>Цена преподавателя за занятие группы целиком (₽)</label><input type="number" id="gTeacherRate" value="${g.teacher_rate||0}"></div>
+    </div>
+    <h3 style="margin-top:14px;">Расписание группы</h3>
+    <div id="gScheduleRows">${(g.schedule&&g.schedule.length?g.schedule:[{day:1,time:'16:00'}]).map(sc=>scheduleRowHtml(sc,true)).join('')}</div>
+    <button class="btn sm ghost" type="button" onclick="addScheduleRow('gScheduleRows')">+ Добавить занятие</button>
+
+    <h3 style="margin-top:16px;">Цели и программа группы</h3>
+    <div class="field full"><textarea id="gGoals" rows="3">${escapeHtml(g.goals||'')}</textarea></div>
+
+    <h3 style="margin-top:16px;">Состав группы</h3>
+    <p style="color:var(--ink-light);font-size:12px;margin-top:-6px;">У каждого ученика в группе — своя цена занятия. Расписание и статусы занятий — общие для всей группы.</p>
+    <ul class="subtle-list">
+      ${members.length ? members.map(s=>`<li><span>${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)} <span style="color:var(--ink-light);">— ${fmtMoney(s.price)}</span></span>
+        <button class="btn sm ghost" onclick="removeFromGroup('${s.id}', ${groupId?`'${groupId}'`:'null'})">Убрать из группы</button></li>`).join('') : '<li>Пока никого нет</li>'}
+    </ul>
+    ${groupId ? `<div class="field" style="margin-top:10px;">
+      <label>Добавить ученика в группу</label>
+      <div style="display:flex;gap:8px;">
+        <select id="addToGroupSel" style="flex:1;">${candidates.filter(s=>s.group_id!==groupId).map(s=>`<option value="${s.id}">${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</option>`).join('') || '<option disabled>Нет доступных учеников этого преподавателя</option>'}</select>
+        <button class="btn sm accent" onclick="addToGroup('${groupId}')">Добавить</button>
+      </div>
+    </div>` : `<p style="color:var(--ink-light);font-size:12px;">Сохраните группу, затем добавьте в неё учеников.</p>`}
+
+    ${groupId ? `<h3 style="margin-top:20px;">Программа и итоги месяца (для всей группы)</h3>
+    <ul class="subtle-list" id="groupReportsList"><li>Загрузка…</li></ul>
+    <button class="btn sm accent" onclick="openGroupReportModal('${groupId}')">+ Отчёт за месяц</button>` : ''}
+
+    <div style="display:flex;justify-content:space-between;margin-top:18px;">
+      <div>${groupId ? `<button class="btn danger" onclick="deleteGroup('${groupId}')">Удалить группу</button>`:''}</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn ghost" onclick="closeOverlay()">Закрыть</button>
+        <button class="btn primary" onclick="saveGroup(${groupId?`'${groupId}'`:'null'}, '${teacherId}')">Сохранить</button>
+      </div>
+    </div>
+  </div>`);
+  if(groupId) loadGroupReportsIntoModal(groupId);
+}
+async function saveGroup(groupId, teacherId){
+  const schedule = [...document.querySelectorAll('#gScheduleRows [data-row]')].map(row=>({
+    day: parseInt(row.querySelector('.schedDay').value,10),
+    time: row.querySelector('.schedTime').value,
+  }));
+  const data = {
+    teacher_id: teacherId,
+    name: document.getElementById('gName').value.trim(),
+    duration: parseInt(document.getElementById('gDuration').value,10),
+    teacher_rate: parseFloat(document.getElementById('gTeacherRate').value)||0,
+    schedule,
+    goals: document.getElementById('gGoals').value.trim(),
+  };
+  if(!data.name){ toast('Укажите название группы'); return; }
+  let error, newId = groupId;
+  if(groupId){ ({ error } = await sb.from('groups').update(data).eq('id', groupId)); }
+  else { const res = await sb.from('groups').insert(data).select().single(); error = res.error; newId = res.data?.id; }
+  if(error){ toast('Ошибка: '+error.message); return; }
+  await refreshGroups();
+  toast('Группа сохранена');
+  if(newId) openGroupModal(newId, teacherId); else closeOverlay();
+  renderTeachers();
+}
+async function deleteGroup(groupId){
+  if(!confirm('Удалить группу? Ученики останутся, но будут откреплены от группы (станут индивидуальными).')) return;
+  const teacherId = getGroup(groupId)?.teacher_id;
+  await sb.from('students').update({group_id:null}).eq('group_id', groupId);
+  const { error } = await sb.from('groups').delete().eq('id', groupId);
+  if(error){ toast('Ошибка: '+error.message); return; }
+  await refreshGroups(); await refreshStudents();
+  closeOverlay(); renderTeachers();
+}
+async function addToGroup(groupId){
+  const sel = document.getElementById('addToGroupSel');
+  if(!sel.value) return;
+  const { error } = await sb.from('students').update({group_id:groupId}).eq('id', sel.value);
+  if(error){ toast('Ошибка: '+error.message); return; }
+  await refreshStudents(); openGroupModal(groupId);
+}
+async function removeFromGroup(studentId, groupId){
+  const { error } = await sb.from('students').update({group_id:null}).eq('id', studentId);
+  if(error){ toast('Ошибка: '+error.message); return; }
+  await refreshStudents();
+  if(groupId) openGroupModal(groupId); else renderStudents();
+}
+
+/* ==================================================================
+   6. УЧЕНИКИ
+   ================================================================== */
+function scheduleShortLabel(schedule){
+  return (schedule||[]).map(x=>`${DAY_NAMES[x.day-1]} ${x.time}`).join(', ') || '—';
+}
 function renderStudents(){
   document.getElementById('addStudentBtn').style.display = session.role==='admin' ? 'inline-flex' : 'none';
   const list = visibleStudents();
