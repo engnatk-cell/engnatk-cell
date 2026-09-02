@@ -462,7 +462,7 @@ const OGE_DEFAULT_MAX = {'Аудирование 1':4,'Аудирование 2'
 const TASKS_EGE = ['Аудирование 1','Аудирование 2','Аудирование 3','Чтение 1','Чтение 2','Чтение 3','Грамматика','Словообразование','Лексика','Письмо','Эссе','Устная часть 1','Устная часть 2','Устная часть 3','Устная часть 4'];
 const EGE_DEFAULT_MAX = {'Аудирование 1':2,'Аудирование 2':3,'Аудирование 3':7,'Чтение 1':3,'Чтение 2':2,'Чтение 3':7,'Грамматика':6,'Словообразование':5,'Лексика':7,'Письмо':6,'Эссе':14,'Устная часть 1':1,'Устная часть 2':4,'Устная часть 3':5,'Устная часть 4':10};
 // Максимальное количество правильных ответов по каждому заданию ЕГЭ (отдельная таблица, не совпадает с макс. баллом)
-const EGE_MAX_CORRECT = {'Аудирование 1':6,'Аудирование 2':7,'Аудирование 3':7,'Чтение 1':7,'Чтение 2':6,'Чтение 3':7,'Грамматика':6,'Словообразование':5,'Лексика':7,'Письмо':6,'Эссе':14,'Устная часть 1':1,'Устная часть 2':4,'Устная часть 3':6,'Устная часть 4':10};
+const EGE_MAX_CORRECT = {'Аудирование 1':6,'Аудирование 2':7,'Аудирование 3':7,'Чтение 1':7,'Чтение 2':6,'Чтение 3':7,'Грамматика':6,'Словообразование':5,'Лексика':7,'Письмо':6,'Эссе':14,'Устная часть 1':1,'Устная часть 2':4,'Устная часть 3':5,'Устная часть 4':10};
 // Таблица перевода первичного балла ЕГЭ в тестовый (индекс = первичный балл)
 const EGE_SCALE = [0,2,3,4,5,7,8,9,10,11,13,14,15,16,18,19,20,21,22,24,25,26,27,28,29,30,31,32,33,34,36,37,38,39,40,41,42,43,44,45,46,48,49,50,51,52,53,54,55,56,57,58,60,61,62,63,64,65,66,67,68,69,70,71,73,74,75,76,77,78,79,80,81,82,84,86,88,90,92,94,96,98,100];
 function ogeGrade(total){
@@ -1663,13 +1663,14 @@ let parentReportChart = null;
 async function openParentReportModal(studentId, from, to){
   const s = getStudent(studentId);
   const grouped = isGrouped(s);
-  from = from || dayjs().startOf('month').format('YYYY-MM-DD');
-  to = to || dayjs().endOf('month').format('YYYY-MM-DD');
+  from = from || '';
+  to = to || '';
   const isAdmin = session.role==='admin';
 
   openOverlay(`<div class="modal wide">
     <div class="modal-head"><h2>Отчёт для родителя</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
     ${grouped ? `<p style="color:var(--ink-light);margin-top:-8px;font-size:12px;">Ученик занимается в группе «${escapeHtml(getGroup(s.group_id)?.name||'')}» — статусы занятий общие для группы, цена и комментарии — свои.</p>`:''}
+    <p style="color:var(--ink-light);font-size:12.5px;margin-top:-4px;">Укажите период и нажмите «Сформировать» — отчёт соберётся за выбранные даты.</p>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
       <div class="field" style="margin:0;"><label>С</label><input type="date" id="prFrom" value="${from}"></div>
       <div class="field" style="margin:0;"><label>По</label><input type="date" id="prTo" value="${to}"></div>
@@ -1677,14 +1678,15 @@ async function openParentReportModal(studentId, from, to){
       <button class="btn sm ghost" onclick="quickRange('${studentId}','month')">Текущий месяц</button>
     </div>
     <div style="display:flex;justify-content:center;">
-      <div class="report-square" id="parentReportSquare"><div class="loading-state">Формируем отчёт…</div></div>
+      <div class="report-square" id="parentReportSquare">
+        <div class="loading-state">Укажите даты периода и нажмите «Сформировать»</div>
+      </div>
     </div>
     <div style="display:flex;justify-content:center;gap:8px;margin-top:16px;">
       <button class="btn primary" onclick="exportNodeAsPNG('parentReportSquare','otchet-${escapeHtml(s.last_name)}')">⭳ Скачать PNG</button>
       <button class="btn primary" onclick="exportNodeAsPDF('parentReportSquare','otchet-${escapeHtml(s.last_name)}')">⭳ Скачать PDF</button>
     </div>
   </div>`);
-  await regenerateParentReport(studentId);
 }
 function quickRange(studentId, kind){
   if(kind==='month'){
@@ -1699,6 +1701,9 @@ async function regenerateParentReport(studentId){
   const g = grouped ? getGroup(s.group_id) : null;
   const from = document.getElementById('prFrom').value;
   const to = document.getElementById('prTo').value;
+  if(!from || !to){ toast('Укажите обе даты периода — «с» и «по»'); return; }
+  if(dayjs(to).isBefore(dayjs(from))){ toast('Дата «по» раньше даты «с»'); return; }
+  document.getElementById('parentReportSquare').innerHTML = '<div class="loading-state">Формируем отчёт…</div>';
 
   let query = sb.from('lessons').select('*').gte('date', from).lte('date', to);
   query = grouped ? query.eq('group_id', s.group_id) : query.eq('student_id', studentId);
@@ -1726,7 +1731,7 @@ async function regenerateParentReport(studentId){
   }
   const attendance = scheduled>0 ? Math.round((done/scheduled)*100) : 0;
 
-  // персональный комментарий ученика за последний месяц периода (для группы — из его собственных записей)
+  // комментарии преподавателя за этот период (для группы — из собственных записей ученика)
   const { data: ownReports } = await sb.from('reports').select('*').eq('student_id', studentId).gte('month', dayjs(from).format('YYYY-MM')).lte('month', dayjs(to).format('YYYY-MM'));
   const personalComment = (ownReports||[]).map(r=>r.comments||r.content).filter(Boolean).join(' ');
   const goalsText = grouped ? (g?.goals || s.goals || 'Цели пока не заданы.') : (s.goals || 'Цели пока не заданы.');
@@ -1742,7 +1747,7 @@ async function regenerateParentReport(studentId){
       <div class="report-stat"><div class="l">Отменено</div><div class="v">${cancelled}</div></div>
     </div>
     <div class="report-chart-wrap"><canvas id="parentReportChart" height="120"></canvas></div>
-    <div class="report-goals"><strong>Цели и программа:</strong><br>${escapeHtml(goalsText)}${personalComment?`<br><br><strong>Комментарий:</strong><br>${escapeHtml(personalComment)}`:''}</div>
+    <div class="report-goals"><strong>Цели на учебный год:</strong><br>${escapeHtml(goalsText)}${personalComment?`<br><br><strong>Комментарии преподавателя за период:</strong><br>${escapeHtml(personalComment)}`:''}</div>
   `;
   const ctx = document.getElementById('parentReportChart');
   if(parentReportChart) parentReportChart.destroy();
