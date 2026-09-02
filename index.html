@@ -194,6 +194,9 @@ input,select,textarea{font-family:var(--font-body);font-size:14px;}
 .daychip.empty{background:transparent;cursor:default;}
 .daychip.weekend{background:var(--butter-soft);}
 .daychip.today{outline:2px solid var(--pink);outline-offset:-2px;}
+.ledger-row .cell.weekend{background:var(--butter-soft);border-radius:6px;}
+.ledger-row .cell.today{background:var(--pink-soft);border-radius:6px;}
+.ledger-row.head .cell.weekend{background:rgba(255,255,255,.18);}
 .daychip.st-planned{background:var(--grey-dark);color:#fff;}
 .daychip.st-done{background:var(--green);color:#fff;}
 .daychip.st-moved{background:var(--butter);color:var(--wine-dark);}
@@ -267,7 +270,7 @@ input,select,textarea{font-family:var(--font-body);font-size:14px;}
 .lvl-excellent{background:var(--green-soft);color:var(--green);}
 .lvl-none{background:var(--grey);color:var(--ink-light);}
 .lvl-badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;}
-.exam-row{display:grid;grid-template-columns:1fr 70px 70px 70px 70px 130px;gap:6px;align-items:center;padding:5px 0;font-size:12.5px;}
+.exam-row{display:grid;grid-template-columns:1fr 70px 70px 130px;gap:6px;align-items:center;padding:5px 0;font-size:12.5px;}
 .exam-row.ege{grid-template-columns:1fr 60px 60px 60px 60px 60px 130px;}
 .exam-row.head{font-weight:700;color:var(--ink-light);font-size:11px;text-transform:uppercase;font-family:var(--font-display);}
 .exam-row input{width:100%;padding:6px 7px;border:none;border-radius:8px;background:var(--grey);text-align:center;}
@@ -450,7 +453,7 @@ dayjs.extend(dayjs_plugin_isoWeek);
 dayjs.locale('ru');
 
 const DAY_NAMES = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']; // isoWeekday 1..7
-const CHANNELS = ['WhatsApp','Telegram','Звонок','Viber','Email'];
+const CHANNELS = ['WhatsApp','Telegram','Звонок','Viber','Email','Макс'];
 const STATUS_LABEL = {planned:'Запланировано', done:'Состоялось', moved:'Перенесено', cancelled:'Отменено'};
 
 /* ---------- Пробники ОГЭ/ЕГЭ ---------- */
@@ -702,6 +705,8 @@ function renderTeachers(){
       <div class="meta">Д.р. ${t.birth_date ? dayjs(t.birth_date).format('DD.MM.YYYY') : '—'} · ${escapeHtml(t.phone||'—')}</div>
       <div class="row"><span>Учеников</span><span>${students.length}</span></div>
       <div class="row"><span>Групп</span><span>${groups.length}</span></div>
+      <div class="row"><span>Телефон для связи (оплата)</span><span>${escapeHtml(t.payment_phone||'—')}</span></div>
+      <div class="row"><span>Банк оплаты</span><span>${escapeHtml(t.payment_bank||'—')}</span></div>
       <div class="actions">
         <button class="btn sm" onclick="openTeacherModal('${t.id}')">Изменить</button>
         <button class="btn sm ghost" onclick="openTeacherGroupsModal('${t.id}')">Ученики и группы</button>
@@ -724,6 +729,8 @@ function openTeacherModal(id){
       <div class="field full"><label>Канал связи</label>
         <select id="tChannel">${CHANNELS.map(c=>`<option ${t?.channel===c?'selected':''}>${c}</option>`).join('')}</select>
       </div>
+      <div class="field"><label>Телефон для связи (оплата/СБП)</label><input id="tPaymentPhone" value="${escapeHtml(t?.payment_phone||'')}" placeholder="+7 900 000-00-00"></div>
+      <div class="field"><label>Банк оплаты</label><input id="tPaymentBank" value="${escapeHtml(t?.payment_bank||'')}" placeholder="Напр. Сбербанк"></div>
     </div>
     <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end;">
       <button class="btn ghost" onclick="closeOverlay()">Отмена</button>
@@ -738,6 +745,8 @@ async function saveTeacher(id){
     birth_date: document.getElementById('tBirth').value || null,
     phone: document.getElementById('tPhone').value.trim(),
     channel: document.getElementById('tChannel').value,
+    payment_phone: document.getElementById('tPaymentPhone').value.trim(),
+    payment_bank: document.getElementById('tPaymentBank').value.trim(),
   };
   if(!data.last_name || !data.first_name){ toast('Укажите фамилию и имя'); return; }
   let error;
@@ -928,7 +937,7 @@ function renderStudents(){
         <button class="btn sm ghost" onclick="openReportModal('${s.id}')">+ Комментарий за месяц</button>
         <button class="btn sm butter" onclick="openParentReportModal('${s.id}')">📄 Отчёт родителю</button>
         ${grouped ? `<button class="btn sm ghost" onclick="openGroupModal('${g?.id}')">👥 Открыть группу</button>` : ''}
-        ${(s.exam_oge||s.exam_ege) ? `<button class="btn sm ghost" onclick="openMockExamsReportModal('${s.id}')">📈 Пробники</button>` : ''}
+        ${(s.exam_oge||s.exam_ege) ? `<button class="btn sm ghost" onclick="openMockExamsModal('${s.id}')">📊 Пробники</button>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -957,8 +966,8 @@ function studentFormHtml(s, isAdmin){
       <div class="field">
         <label>Экзамен</label>
         <div style="display:flex;gap:14px;padding-top:9px;">
-          <label style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;color:var(--ink);"><input type="checkbox" id="sExamOge" ${s.exam_oge?'checked':''} style="width:16px;height:16px;"> ОГЭ</label>
-          <label style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;color:var(--ink);"><input type="checkbox" id="sExamEge" ${s.exam_ege?'checked':''} style="width:16px;height:16px;"> ЕГЭ</label>
+          <label style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;color:var(--ink);"><input type="checkbox" id="sExamOge" ${s.exam_oge?'checked':''} onchange="toggleExamSections('${s.id||''}')" style="width:16px;height:16px;"> ОГЭ</label>
+          <label style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;color:var(--ink);"><input type="checkbox" id="sExamEge" ${s.exam_ege?'checked':''} onchange="toggleExamSections('${s.id||''}')" style="width:16px;height:16px;"> ЕГЭ</label>
         </div>
       </div>
     </div>
@@ -972,15 +981,15 @@ function studentFormHtml(s, isAdmin){
 
     <div id="individualScheduleBlock" style="display:${grouped?'none':'block'};">
       <div class="field" style="margin-top:10px;"><label>Длительность занятия</label>
-        <select id="sDuration" ${isAdmin?'':'disabled'}>
+        <select id="sDuration">
           ${[30,45,60,90].map(m=>`<option value="${m}" ${s.duration==m?'selected':''}>${m} минут</option>`).join('')}
         </select>
       </div>
       <h3 style="margin-top:16px;">Расписание занятий</h3>
       <div id="scheduleRows">
-        ${(s.schedule&&s.schedule.length?s.schedule:[{day:1,time:'16:00'}]).map(sc=>scheduleRowHtml(sc, isAdmin)).join('')}
+        ${(s.schedule&&s.schedule.length?s.schedule:[{day:1,time:'16:00'}]).map(sc=>scheduleRowHtml(sc, true)).join('')}
       </div>
-      ${isAdmin?`<button class="btn sm ghost" type="button" onclick="addScheduleRow('scheduleRows')">+ Добавить занятие</button>`:''}
+      <button class="btn sm ghost" type="button" onclick="addScheduleRow('scheduleRows')">+ Добавить занятие</button>
     </div>
 
     ${isAdmin?`<h3 style="margin-top:16px;">Оплата и ссылки</h3>
@@ -1016,18 +1025,20 @@ function studentFormHtml(s, isAdmin){
     <h3 style="margin-top:16px;">Комментарии по месяцам (для этого ученика)</h3>
     <ul class="subtle-list" id="reportsList"><li>Загрузка…</li></ul>
 
-    ${(s.exam_oge||s.exam_ege) ? `
     <h3 style="margin-top:16px;">Пробники</h3>
-    <div id="mockExamsBlock">
-      ${s.exam_oge ? `<p style="font-weight:700;font-size:13px;margin:10px 0 4px;">ОГЭ</p>
-      <ul class="subtle-list" id="mockExamsListOge"><li>Загрузка…</li></ul>
-      <button class="btn sm accent" onclick="openMockExamModal('${s.id}','oge')">+ Добавить пробник ОГЭ</button>` : ''}
-      ${s.exam_ege ? `<p style="font-weight:700;font-size:13px;margin:14px 0 4px;">ЕГЭ</p>
-      <ul class="subtle-list" id="mockExamsListEge"><li>Загрузка…</li></ul>
-      <button class="btn sm accent" onclick="openMockExamModal('${s.id}','ege')">+ Добавить пробник ЕГЭ</button>` : ''}
-      <div style="margin-top:12px;"><button class="btn sm butter" onclick="openMockExamsReportModal('${s.id}')">📈 Отчёт по пробникам</button></div>
-    </div>` : ''}
+    ${s.id ? `
+      <p id="mockExamsNone" style="display:${(s.exam_oge||s.exam_ege)?'none':'block'};color:var(--ink-light);font-size:12.5px;">Отметьте выше «ОГЭ» или «ЕГЭ», чтобы добавлять пробники.</p>
+      <button class="btn sm butter" id="openMockExamsBtn" style="display:${(s.exam_oge||s.exam_ege)?'inline-flex':'none'};" onclick="openMockExamsModal('${s.id}')">📊 Открыть пробники (добавить результаты / отчёт)</button>
+    ` : `<p style="color:var(--ink-light);font-size:12.5px;">Сначала сохраните ученика, затем отметьте ОГЭ/ЕГЭ и добавьте пробники.</p>`}
   `;
+}
+function toggleExamSections(studentId){
+  const oge = document.getElementById('sExamOge')?.checked;
+  const ege = document.getElementById('sExamEge')?.checked;
+  const btn = document.getElementById('openMockExamsBtn');
+  const none = document.getElementById('mockExamsNone');
+  if(btn) btn.style.display = (oge||ege) ? 'inline-flex':'none';
+  if(none) none.style.display = (oge||ege)?'none':'block';
 }
 function toggleStudentMode(){
   const grouped = document.getElementById('sMode').value==='group';
@@ -1072,8 +1083,6 @@ async function openStudentModal(id){
   if(id){
     loadPaymentsIntoModal(id, isAdmin);
     loadReportsIntoModal(id);
-    if(s.exam_oge) loadMockExamsIntoModal(id, 'oge');
-    if(s.exam_ege) loadMockExamsIntoModal(id, 'ege');
   } else {
     document.getElementById('reportsList').innerHTML = '<li>Сначала сохраните ученика</li>';
   }
@@ -1140,6 +1149,15 @@ async function saveStudent(id, isAdmin){
     }
   } else {
     data = { goals, grade, exam_oge, exam_ege };
+    const grouped = document.getElementById('sMode').value==='group';
+    if(!grouped){
+      const scheduleRows = [...document.querySelectorAll('#scheduleRows [data-row]')].map(row=>({
+        day: parseInt(row.querySelector('.schedDay').value,10),
+        time: row.querySelector('.schedTime').value,
+      }));
+      data.duration = parseInt(document.getElementById('sDuration').value,10);
+      data.schedule = scheduleRows;
+    }
   }
   let error;
   if(id){ ({ error } = await sb.from('students').update(data).eq('id', id)); }
@@ -1278,7 +1296,14 @@ async function loadMockExamsIntoModal(studentId, examType){
   const { data, error } = await sb.from('mock_exams').select('*').eq('student_id', studentId).eq('exam_type', examType).order('date',{ascending:false});
   const el = document.getElementById('mockExamsList'+(examType==='oge'?'Oge':'Ege'));
   if(!el) return;
-  if(error){ el.innerHTML = '<li>Ошибка загрузки</li>'; return; }
+  if(error){
+    if(error.code==='42P01' || /does not exist/i.test(error.message)){
+      el.innerHTML = '<li>Таблица «mock_exams» ещё не создана в Supabase — выполните SQL-миграцию для пробников</li>';
+    } else {
+      el.innerHTML = '<li>Ошибка загрузки: '+escapeHtml(error.message)+'</li>';
+    }
+    return;
+  }
   el.innerHTML = (data&&data.length) ? data.map(ex=>{
     const {score,max} = examTotals(ex.tasks||[]);
     return `<li><span>${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'Пробник')} <span style="color:var(--ink-light);">(${score}/${max}, ${examResultLabel(examType,score,max)})</span></span>
@@ -1353,10 +1378,13 @@ async function uploadExamPhotoFile(evt){
 }
 
 async function openMockExamModal(studentId, examType, examId){
+ try {
   const s = getStudent(studentId);
+  if(!s){ toast('Ученик не найден — переоткройте карточку'); return; }
   let existing = null;
   if(examId){
-    const { data } = await sb.from('mock_exams').select('*').eq('id', examId).maybeSingle();
+    const { data, error: fetchErr } = await sb.from('mock_exams').select('*').eq('id', examId).maybeSingle();
+    if(fetchErr){ toast('Ошибка загрузки пробника: '+fetchErr.message); return; }
     existing = data;
   }
   const tasksList = examType==='oge' ? TASKS_OGE : TASKS_EGE;
@@ -1405,16 +1433,21 @@ async function openMockExamModal(studentId, examType, examId){
   </div>`);
   renderExamPhotosDraft();
   recalcExamTotals();
+ } catch(err){
+  console.error('openMockExamModal exception:', err);
+  toast('Не удалось открыть форму пробника: '+err.message);
+ }
 }
 async function saveMockExam(studentId, examType, examId){
+ try {
   const s = getStudent(studentId);
-  const tasksList = examType==='oge' ? TASKS_OGE : TASKS_EGE;
   const tasks = [];
   document.querySelectorAll('[data-task-row]').forEach(row=>{
     const t = { name: row.dataset.name, score: parseFloat(row.querySelector('.taskScore').value)||0, max: parseFloat(row.querySelector('.taskMax').value)||0 };
     if(examType==='ege'){ t.correct = parseFloat(row.querySelector('.taskCorrect').value)||0; t.maxCorrect = parseFloat(row.querySelector('.taskMaxCorrect').value)||0; }
     tasks.push(t);
   });
+  if(!tasks.length){ toast('Не удалось считать задания формы — попробуйте переоткрыть карточку пробника'); return; }
   const data = {
     student_id: studentId, teacher_id: s.teacher_id, exam_type: examType,
     date: document.getElementById('examDate').value,
@@ -1425,9 +1458,23 @@ async function saveMockExam(studentId, examType, examId){
   let error;
   if(examId){ ({ error } = await sb.from('mock_exams').update(data).eq('id', examId)); }
   else { ({ error } = await sb.from('mock_exams').insert(data)); }
-  if(error){ toast('Ошибка сохранения: '+error.message); return; }
+  if(error){
+    console.error('saveMockExam error:', error);
+    if(error.code==='42P01' || /does not exist/i.test(error.message)){
+      toast('Таблица «mock_exams» ещё не создана в Supabase — выполните SQL-миграцию для пробников (см. инструкцию в чате)');
+    } else if(error.code==='42501' || /row-level security|permission denied/i.test(error.message)){
+      toast('Нет прав на сохранение — проверьте политики RLS для таблицы mock_exams в Supabase');
+    } else {
+      toast('Ошибка сохранения: '+error.message);
+    }
+    return;
+  }
   toast('Пробник сохранён');
   openStudentModal(studentId);
+ } catch(err){
+  console.error('saveMockExam exception:', err);
+  toast('Непредвиденная ошибка при сохранении пробника: '+err.message);
+ }
 }
 async function deleteMockExam(studentId, examType, examId){
   if(!confirm('Удалить этот пробник?')) return;
@@ -1438,14 +1485,40 @@ async function deleteMockExam(studentId, examType, examId){
 
 /* ---------- Отчёт по пробникам (прогресс + таблица конкретного пробника) ---------- */
 let mockExamsReportChart1 = null, mockExamsReportChart2 = null;
-async function openMockExamsReportModal(studentId){
+async function openMockExamsModal(studentId){
   const s = getStudent(studentId);
   const { data, error } = await sb.from('mock_exams').select('*').eq('student_id', studentId).order('date',{ascending:true});
   if(error){ toast('Ошибка: '+error.message); return; }
   const exams = data || [];
+  const ogeExams = exams.filter(e=>e.exam_type==='oge');
+  const egeExams = exams.filter(e=>e.exam_type==='ege');
   const isAdmin = session.role==='admin';
   openOverlay(`<div class="modal wide">
-    <div class="modal-head"><h2>Отчёт по пробникам — ${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+    <div class="modal-head"><h2>Пробники — ${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+
+    ${s.exam_oge ? `<h3>ОГЭ</h3>
+    <div class="simple-list" style="margin-bottom:6px;">
+      ${ogeExams.length ? ogeExams.map(ex=>{ const {score,max}=examTotals(ex.tasks||[]); return `<div class="simple-row">
+        <span class="name">${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'')}</span>
+        <span class="meta2">${score}/${max} · ${examResultLabel('oge',score,max)}</span>
+        <button class="btn sm ghost" onclick="openMockExamModal('${studentId}','oge','${ex.id}')">Открыть</button>
+      </div>`; }).join('') : '<div class="simple-row">Пробников ОГЭ пока нет</div>'}
+    </div>
+    <button class="btn sm accent" onclick="openMockExamModal('${studentId}','oge')">+ Добавить результаты пробника ОГЭ</button>` : ''}
+
+    ${s.exam_ege ? `<h3 style="margin-top:${s.exam_oge?'20px':'0'};">ЕГЭ</h3>
+    <div class="simple-list" style="margin-bottom:6px;">
+      ${egeExams.length ? egeExams.map(ex=>{ const {score,max}=examTotals(ex.tasks||[]); return `<div class="simple-row">
+        <span class="name">${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'')}</span>
+        <span class="meta2">${score}/${max} · ${examResultLabel('ege',score,max)}</span>
+        <button class="btn sm ghost" onclick="openMockExamModal('${studentId}','ege','${ex.id}')">Открыть</button>
+      </div>`; }).join('') : '<div class="simple-row">Пробников ЕГЭ пока нет</div>'}
+    </div>
+    <button class="btn sm accent" onclick="openMockExamModal('${studentId}','ege')">+ Добавить результаты пробника ЕГЭ</button>` : ''}
+
+    ${(!s.exam_oge && !s.exam_ege) ? `<p style="color:var(--ink-light);font-size:12.5px;">У ученика не отмечено ОГЭ или ЕГЭ — откройте карточку ученика и отметьте нужный экзамен.</p>` : ''}
+
+    <h3 style="margin-top:22px;">Отчёт по пробникам</h3>
     <p style="color:var(--ink-light);font-size:12.5px;margin-top:-8px;">Выберите пробники для включения в отчёт.</p>
     <div style="display:flex;gap:8px;margin-bottom:8px;">
       <button class="btn sm ghost" onclick="toggleAllExamChecks(true)">Выбрать все</button>
@@ -1459,7 +1532,7 @@ async function openMockExamsReportModal(studentId){
           <span class="name">${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'')} (${ex.exam_type==='oge'?'ОГЭ':'ЕГЭ'})</span>
           <span class="meta2">${score}/${max}</span>
         </label>`;
-      }).join('') : '<div class="simple-row">Пробников пока нет</div>'}
+      }).join('') : '<div class="simple-row">Пробников пока нет — добавьте хотя бы один выше</div>'}
     </div>
     <div class="field" style="margin-top:12px;">
       <label>Добавить в отчёт таблицу конкретного пробника (необязательно)</label>
@@ -1594,11 +1667,26 @@ async function regenerateParentReport(studentId){
   query = grouped ? query.eq('group_id', s.group_id) : query.eq('student_id', studentId);
   const { data: lessons, error } = await query;
   if(error){ toast('Ошибка: '+error.message); return; }
+  const byDate = {};
+  (lessons||[]).forEach(l=>{ byDate[l.date] = l; });
 
-  const scheduled = scheduledCountInRange(grouped ? g : s, from, to);
-  const done = (lessons||[]).filter(l=>l.status==='done').length;
-  const moved = (lessons||[]).filter(l=>l.status==='moved').length;
-  const cancelled = (lessons||[]).filter(l=>l.status==='cancelled').length;
+  const scheduleEntity = grouped ? g : s;
+  const today = todayISO();
+  let scheduled=0, done=0, moved=0, cancelled=0;
+  let cur = dayjs(from);
+  const end = dayjs(to);
+  while(!cur.isAfter(end)){
+    if((scheduleEntity.schedule||[]).some(sc=>sc.day===cur.isoWeekday())){
+      scheduled++;
+      const iso = cur.format('YYYY-MM-DD');
+      const l = byDate[iso];
+      const st = l ? l.status : (iso<today ? 'done' : 'planned');
+      if(st==='done') done++;
+      else if(st==='moved') moved++;
+      else if(st==='cancelled') cancelled++;
+    }
+    cur = cur.add(1,'day');
+  }
   const attendance = scheduled>0 ? Math.round((done/scheduled)*100) : 0;
 
   // персональный комментарий ученика за последний месяц периода (для группы — из его собственных записей)
@@ -1637,7 +1725,13 @@ let currentMonth = dayjs().startOf('month');
 let lessonsCache = {}; // key: 'student:ID|DATE' или 'group:ID|DATE' -> lesson row
 
 function lessonKey(kind, id, dateISO){ return kind+':'+id+'|'+dateISO; }
-function getStatus(kind, id, dateISO){ const l = lessonsCache[lessonKey(kind,id,dateISO)]; return l ? l.status : 'planned'; }
+function todayISO(){ return dayjs().format('YYYY-MM-DD'); }
+function getStatus(kind, id, dateISO){
+  const l = lessonsCache[lessonKey(kind,id,dateISO)];
+  if(l) return l.status;
+  // прошедшее занятие без явного статуса — автоматически считается состоявшимся
+  return dateISO < todayISO() ? 'done' : 'planned';
+}
 function getLesson(kind, id, dateISO){ return lessonsCache[lessonKey(kind,id,dateISO)]; }
 function cacheLesson(l){
   if(l.group_id) lessonsCache[lessonKey('group', l.group_id, l.date)] = l;
@@ -1714,9 +1808,10 @@ async function renderWeekGrid(){
       <div class="d-label">${DAY_NAMES[i]} · ${d.format('D MMM')}</div>
       ${lessons.map(l=>{
         const st = getStatus(l.kind, l.id, iso);
+        const lesson = getLesson(l.kind, l.id, iso);
         return `<div class="lesson-block st-${st}" onclick="openStatusModal('${l.kind}','${l.id}','${iso}')">
           ${escapeHtml(l.label)}
-          <small>${l.time} · ${STATUS_LABEL[st]}</small>
+          <small>${l.time} · ${STATUS_LABEL[st]}${(st==='moved'&&lesson?.moved_to_date)?' → '+dayjs(lesson.moved_to_date).format('DD.MM'):''}</small>
         </div>`;
       }).join('') || '<div style="color:var(--ink-light);font-size:11.5px;">Занятий нет</div>'}
     </div>`;
@@ -1727,21 +1822,24 @@ async function renderWeekGrid(){
 function openStatusModal(kind, id, dateISO){
   const isGroup = kind==='group';
   const entity = isGroup ? getGroup(id) : getStudent(id);
-  const l = getLesson(kind, id, dateISO) || {status:'planned', initiator:'', reason:''};
+  const l = getLesson(kind, id, dateISO) || {status:null, initiator:'', reason:'', moved_to_date:''};
+  const currentStatus = getStatus(kind, id, dateISO);
+  const isPastAuto = !l.status && dateISO < todayISO();
   const rate = isGroup ? (entity.teacher_rate||0) : (entity.teacher_rate||0);
   const members = isGroup ? membersOfGroup(id) : [];
   openOverlay(`<div class="modal narrow">
     <div class="modal-head"><h2>${isGroup ? '👥 '+escapeHtml(entity.name) : escapeHtml(entity.last_name)+' '+escapeHtml(entity.first_name)}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
     <p style="color:var(--ink-light);margin-top:-8px;">${dayjs(dateISO).format('dddd, D MMMM YYYY')}</p>
     ${isGroup ? `<p style="font-size:12.5px;color:var(--ink-light);">Ученики: ${members.map(m=>escapeHtml(m.last_name)).join(', ')||'—'}</p>` : ''}
+    ${isPastAuto ? `<p style="font-size:12px;color:var(--ink-light);">Дата уже прошла — занятие автоматически считается состоявшимся, если статус не менялся вручную.</p>` : ''}
     <div class="stat-card" style="margin-bottom:14px;">
       <div class="label">${isGroup?'Стоимость занятия для преподавателя (за всю группу)':'Стоимость занятия для преподавателя'}</div>
       <div class="value">${fmtMoney(rate)}</div>
     </div>
     <div class="status-picker" id="statusPicker">
-      ${['planned','done','moved','cancelled'].map(st=>`<button type="button" class="st-${st} ${l.status===st?'active':''}" data-st="${st}" onclick="pickStatus('${st}')">${STATUS_LABEL[st]}</button>`).join('')}
+      ${['planned','done','moved','cancelled'].map(st=>`<button type="button" class="st-${st} ${currentStatus===st?'active':''}" data-st="${st}" onclick="pickStatus('${st}')">${STATUS_LABEL[st]}</button>`).join('')}
     </div>
-    <div id="reasonBlock" style="display:${(l.status==='moved'||l.status==='cancelled')?'block':'none'};">
+    <div id="reasonBlock" style="display:${(currentStatus==='moved'||currentStatus==='cancelled')?'block':'none'};">
       <div class="field"><label>Инициатор</label>
         <select id="initiatorSel">
           <option value="student" ${l.initiator==='student'?'selected':''}>${isGroup?'Ученик/группа':'Ученик'}</option>
@@ -1759,6 +1857,10 @@ function openStatusModal(kind, id, dateISO){
         <label>Уточните причину</label>
         <input id="reasonOther" value="${(l.reason && !['Болезнь','Технические трудности'].includes(l.reason))?escapeHtml(l.reason):''}">
       </div>
+      <div class="field" id="movedToDateWrap" style="display:${currentStatus==='moved'?'block':'none'};">
+        <label>Дата, на которую переносится урок</label>
+        <input type="date" id="movedToDate" value="${l.moved_to_date||''}">
+      </div>
     </div>
     <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end;">
       <button class="btn ghost" onclick="closeOverlay()">Отмена</button>
@@ -1769,6 +1871,8 @@ function openStatusModal(kind, id, dateISO){
 function pickStatus(st){
   document.querySelectorAll('#statusPicker button').forEach(b=>b.classList.toggle('active', b.dataset.st===st));
   document.getElementById('reasonBlock').style.display = (st==='moved'||st==='cancelled') ? 'block':'none';
+  const mtd = document.getElementById('movedToDateWrap');
+  if(mtd) mtd.style.display = st==='moved' ? 'block':'none';
 }
 function toggleReasonOther(){
   document.getElementById('reasonOtherWrap').style.display = document.getElementById('reasonSel').value==='other' ? 'block':'none';
@@ -1777,21 +1881,30 @@ async function saveStatus(kind, id, dateISO){
   const isGroup = kind==='group';
   const entity = isGroup ? getGroup(id) : getStudent(id);
   const st = document.querySelector('#statusPicker button.active')?.dataset.st || 'planned';
-  const existing = getLesson(kind, id, dateISO);
-  const conflictCol = isGroup ? 'group_id,date' : 'student_id,date';
+  const filterCol = isGroup ? 'group_id' : 'student_id';
+  const otherCol = isGroup ? 'student_id' : 'group_id';
+
+  // ищем существующую запись напрямую в базе (не полагаемся на ON CONFLICT — не работает с частичными уникальными индексами)
+  const { data: existingRows, error: findErr } = await sb.from('lessons').select('id').eq(filterCol, id).eq('date', dateISO).is(otherCol, null);
+  if(findErr){ toast('Ошибка: '+findErr.message); return; }
+  const existingId = existingRows && existingRows[0] ? existingRows[0].id : null;
+
   let error;
   if(st==='planned'){
-    if(existing){ ({ error } = await sb.from('lessons').delete().eq('id', existing.id)); }
+    if(existingId){ ({ error } = await sb.from('lessons').delete().eq('id', existingId)); }
     delete lessonsCache[lessonKey(kind,id,dateISO)];
   } else if(st==='done'){
-    const payload = { student_id: isGroup?null:id, group_id: isGroup?id:null, teacher_id: entity.teacher_id, date:dateISO, status:'done', initiator:null, reason:null };
-    ({ error } = await sb.from('lessons').upsert(payload, {onConflict:conflictCol}));
+    const payload = { student_id: isGroup?null:id, group_id: isGroup?id:null, teacher_id: entity.teacher_id, date:dateISO, status:'done', initiator:null, reason:null, moved_to_date:null };
+    if(existingId){ ({ error } = await sb.from('lessons').update(payload).eq('id', existingId)); }
+    else { ({ error } = await sb.from('lessons').insert(payload)); }
   } else {
     const initiator = document.getElementById('initiatorSel').value;
     let reason = document.getElementById('reasonSel').value;
     if(reason==='other') reason = document.getElementById('reasonOther').value.trim() || 'Другая причина';
-    const payload = { student_id: isGroup?null:id, group_id: isGroup?id:null, teacher_id: entity.teacher_id, date:dateISO, status:st, initiator, reason };
-    ({ error } = await sb.from('lessons').upsert(payload, {onConflict:conflictCol}));
+    const movedToDate = st==='moved' ? (document.getElementById('movedToDate').value || null) : null;
+    const payload = { student_id: isGroup?null:id, group_id: isGroup?id:null, teacher_id: entity.teacher_id, date:dateISO, status:st, initiator, reason, moved_to_date:movedToDate };
+    if(existingId){ ({ error } = await sb.from('lessons').update(payload).eq('id', existingId)); }
+    else { ({ error } = await sb.from('lessons').insert(payload)); }
   }
   if(error){ toast('Ошибка сохранения: '+error.message); return; }
   closeOverlay();
@@ -1828,7 +1941,7 @@ async function renderMonthSummary(){
   let head = `<div class="ledger-row head" style="grid-template-columns:${tmpl};"><div class="namecell">Ученик / группа</div>`;
   for(let d=1; d<=daysInMonth; d++){
     const dt = currentMonth.date(d);
-    head += `<div class="cell">${d}<br>${DAY_NAMES[dt.isoWeekday()-1]}</div>`;
+    head += `<div class="cell ${dt.isoWeekday()>=6?'weekend':''}">${d}<br>${DAY_NAMES[dt.isoWeekday()-1]}</div>`;
   }
   head += `<div class="cell">Занятий</div><div class="cell">Сумма</div></div>`;
 
@@ -1842,11 +1955,11 @@ async function renderMonthSummary(){
       const iso = dt.format('YYYY-MM-DD');
       const scheduled = (r.schedule||[]).some(sc=>sc.day===dt.isoWeekday());
       const weekend = dt.isoWeekday()>=6;
-      if(!scheduled){ row += `<div class="cell"><div class="daychip empty"></div></div>`; continue; }
+      const cellCls = ['cell']; if(weekend) cellCls.push('weekend'); if(iso===today) cellCls.push('today');
+      if(!scheduled){ row += `<div class="${cellCls.join(' ')}"><div class="daychip empty"></div></div>`; continue; }
       const st = getStatus(r.kind, r.id, iso);
       if(st==='done'){ count++; sum += (r.rate||0); }
-      const cls = ['daychip','st-'+st]; if(weekend) cls.push('weekend'); if(iso===today) cls.push('today');
-      row += `<div class="cell"><div class="${cls.join(' ')}" onclick="openStatusModal('${r.kind}','${r.id}','${iso}')" title="${STATUS_LABEL[st]}">${st==='planned'?'·':st[0].toUpperCase()}</div></div>`;
+      row += `<div class="${cellCls.join(' ')}"><div class="daychip st-${st}" onclick="openStatusModal('${r.kind}','${r.id}','${iso}')" title="${STATUS_LABEL[st]}">${st==='planned'?'·':st[0].toUpperCase()}</div></div>`;
     }
     row += `<div class="cell" style="font-weight:700;">${count}</div><div class="cell" style="font-weight:700;">${fmtMoney(sum)}</div>`;
     grandCount+=count; grandSum+=sum;
@@ -1884,11 +1997,10 @@ function studentMonthStats(student, monthObj){
     const scheduled = (student.schedule||[]).some(sc=>sc.day===dt.isoWeekday());
     if(!scheduled) continue;
     const iso = dt.format('YYYY-MM-DD');
-    const l = getLesson('student', student.id, iso);
-    if(!l) continue;
-    if(l.status==='done') done++;
-    else if(l.status==='moved'){ if(l.initiator==='teacher') movedT++; else movedS++; }
-    else if(l.status==='cancelled'){ if(l.initiator==='teacher') cancT++; else cancS++; }
+    const st = getStatus('student', student.id, iso);
+    if(st==='done') done++;
+    else if(st==='moved'){ const l=getLesson('student',student.id,iso); if(l?.initiator==='teacher') movedT++; else movedS++; }
+    else if(st==='cancelled'){ const l=getLesson('student',student.id,iso); if(l?.initiator==='teacher') cancT++; else cancS++; }
   }
   const pays = paymentsInMonthCached(student.id, monthObj);
   const paidCount = pays.reduce((a,p)=>a+p.count,0);
@@ -1907,11 +2019,10 @@ function groupMonthStats(group, monthObj){
     const scheduled = (group.schedule||[]).some(sc=>sc.day===dt.isoWeekday());
     if(!scheduled) continue;
     const iso = dt.format('YYYY-MM-DD');
-    const l = getLesson('group', group.id, iso);
-    if(!l) continue;
-    if(l.status==='done') done++;
-    else if(l.status==='moved'){ if(l.initiator==='teacher') movedT++; else movedS++; }
-    else if(l.status==='cancelled'){ if(l.initiator==='teacher') cancT++; else cancS++; }
+    const st = getStatus('group', group.id, iso);
+    if(st==='done') done++;
+    else if(st==='moved'){ const l=getLesson('group',group.id,iso); if(l?.initiator==='teacher') movedT++; else movedS++; }
+    else if(st==='cancelled'){ const l=getLesson('group',group.id,iso); if(l?.initiator==='teacher') cancT++; else cancS++; }
   }
   const members = membersOfGroup(group.id);
   let paidAmount = 0, paidCount = 0;
@@ -1964,7 +2075,7 @@ function renderAdminSummaryTable(){
   const dash = `<div class="cell">—</div>`;
 
   let head = `<div class="ledger-row head" style="grid-template-columns:${tmpl};"><div class="namecell">Преподаватель / ученик</div>`;
-  for(let d=1; d<=daysInMonth; d++){ const dt=currentMonth.date(d); head += `<div class="cell">${d}<br>${DAY_NAMES[dt.isoWeekday()-1]}</div>`; }
+  for(let d=1; d<=daysInMonth; d++){ const dt=currentMonth.date(d); head += `<div class="cell ${dt.isoWeekday()>=6?'weekend':''}">${d}<br>${DAY_NAMES[dt.isoWeekday()-1]}</div>`; }
   head += `<div class="cell">Занятий</div><div class="cell">Опл.</div><div class="cell">Пер.(уч)</div><div class="cell">Пер.(пр)</div><div class="cell">Отм.(уч)</div><div class="cell">Отм.(пр)</div>
     <div class="cell">Ставка</div><div class="cell">Зарплата</div><div class="cell">Цена уч.</div><div class="cell">Оплата мес.</div><div class="cell">Приб. до нал.</div><div class="cell">Налог 4%</div><div class="cell">Приб. после нал.</div></div>`;
 
@@ -1986,10 +2097,10 @@ function renderAdminSummaryTable(){
         const iso = dt.format('YYYY-MM-DD');
         const scheduled = (s.schedule||[]).some(sc=>sc.day===dt.isoWeekday());
         const weekend = dt.isoWeekday()>=6;
-        if(!scheduled){ row += `<div class="cell"><div class="daychip empty"></div></div>`; continue; }
+        const cellCls = ['cell']; if(weekend) cellCls.push('weekend'); if(iso===today) cellCls.push('today');
+        if(!scheduled){ row += `<div class="${cellCls.join(' ')}"><div class="daychip empty"></div></div>`; continue; }
         const st = getStatus('student', s.id, iso);
-        const cls=['daychip','st-'+st]; if(weekend) cls.push('weekend'); if(iso===today) cls.push('today');
-        row += `<div class="cell"><div class="${cls.join(' ')}" onclick="openStatusModal('student','${s.id}','${iso}')" title="${STATUS_LABEL[st]}">${st==='planned'?'·':st[0].toUpperCase()}</div></div>`;
+        row += `<div class="${cellCls.join(' ')}"><div class="daychip st-${st}" onclick="openStatusModal('student','${s.id}','${iso}')" title="${STATUS_LABEL[st]}">${st==='planned'?'·':st[0].toUpperCase()}</div></div>`;
       }
       row += `<div class="cell" style="font-weight:700;">${stats.done}</div>
         <div class="cell" style="font-weight:700;cursor:pointer;text-decoration:underline dotted;" onclick="showPaymentsPopup('${s.id}')">${stats.paidCount}</div>
@@ -2016,10 +2127,10 @@ function renderAdminSummaryTable(){
         const iso = dt.format('YYYY-MM-DD');
         const scheduled = (g.schedule||[]).some(sc=>sc.day===dt.isoWeekday());
         const weekend = dt.isoWeekday()>=6;
-        if(!scheduled){ row += `<div class="cell"><div class="daychip empty"></div></div>`; continue; }
+        const cellCls = ['cell']; if(weekend) cellCls.push('weekend'); if(iso===today) cellCls.push('today');
+        if(!scheduled){ row += `<div class="${cellCls.join(' ')}"><div class="daychip empty"></div></div>`; continue; }
         const st = getStatus('group', g.id, iso);
-        const cls=['daychip','st-'+st]; if(weekend) cls.push('weekend'); if(iso===today) cls.push('today');
-        row += `<div class="cell"><div class="${cls.join(' ')}" onclick="openStatusModal('group','${g.id}','${iso}')" title="${STATUS_LABEL[st]}">${st==='planned'?'·':st[0].toUpperCase()}</div></div>`;
+        row += `<div class="${cellCls.join(' ')}"><div class="daychip st-${st}" onclick="openStatusModal('group','${g.id}','${iso}')" title="${STATUS_LABEL[st]}">${st==='planned'?'·':st[0].toUpperCase()}</div></div>`;
       }
       row += `<div class="cell" style="font-weight:700;">${gStats.done}</div>
         <div class="cell" style="font-weight:700;">${gStats.paidCount}</div>
@@ -2041,7 +2152,13 @@ function renderAdminSummaryTable(){
         const mPaidAmount = mPays.reduce((a,p)=>a + (p.amount!==undefined&&p.amount!==null?p.amount:p.count*(m.price||0)), 0);
         const mPaidCount = mPays.reduce((a,p)=>a+p.count,0);
         let mrow = `<div class="namecell" style="padding-left:36px;color:var(--ink-light);">— ${escapeHtml(m.last_name)} ${escapeHtml(m.first_name)}</div>`;
-        for(let d=1; d<=daysInMonth; d++) mrow += `<div class="cell"><div class="daychip empty"></div></div>`;
+        for(let d=1; d<=daysInMonth; d++){
+          const dt = currentMonth.date(d);
+          const iso = dt.format('YYYY-MM-DD');
+          const weekend = dt.isoWeekday()>=6;
+          const cellCls = ['cell']; if(weekend) cellCls.push('weekend'); if(iso===today) cellCls.push('today');
+          mrow += `<div class="${cellCls.join(' ')}"><div class="daychip empty"></div></div>`;
+        }
         mrow += `<div class="cell">—</div>
           <div class="cell" style="cursor:pointer;text-decoration:underline dotted;" onclick="showPaymentsPopup('${m.id}')">${mPaidCount}</div>
           <div class="cell">—</div><div class="cell">—</div><div class="cell">—</div><div class="cell">—</div>
@@ -2114,7 +2231,7 @@ function showBreakdownPopup(kind, id, type){
   const label = type==='moved' ? 'Переносы' : 'Отмены';
   openOverlay(`<div class="modal narrow">
     <div class="modal-head"><h2>${label} — ${escapeHtml(name)}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
-    <div class="simple-list">${rows.length? rows.map(l=>`<div class="simple-row"><span class="name">${dayjs(l.date).format('DD.MM.YYYY')}</span><span class="meta2">${l.initiator==='teacher'?'По инициативе преподавателя':'По инициативе ученика/группы'} · ${escapeHtml(l.reason||'')}</span></div>`).join('') : `<div class="simple-row">Пока нет записей</div>`}</div>
+    <div class="simple-list">${rows.length? rows.map(l=>`<div class="simple-row"><span class="name">${dayjs(l.date).format('DD.MM.YYYY')}</span><span class="meta2">${l.initiator==='teacher'?'По инициативе преподавателя':'По инициативе ученика/группы'} · ${escapeHtml(l.reason||'')}${l.moved_to_date?' · перенесено на '+dayjs(l.moved_to_date).format('DD.MM.YYYY'):''}</span></div>`).join('') : `<div class="simple-row">Пока нет записей</div>`}</div>
     <div style="display:flex;justify-content:flex-end;margin-top:14px;"><button class="btn ghost" onclick="closeOverlay()">Закрыть</button></div>
   </div>`);
 }
@@ -2329,6 +2446,17 @@ document.addEventListener('DOMContentLoaded', ()=>{
     document.getElementById(id).addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
   });
 });
+
+/* Глобальный перехват необработанных ошибок — чтобы «тихие» сбои были видны, а не молчали */
+window.addEventListener('error', (e)=>{
+  console.error('Необработанная ошибка:', e.error || e.message);
+  if(document.getElementById('app') && document.getElementById('app').style.display!=='none') toast('Произошла ошибка: '+(e.message||'см. консоль браузера (F12)'));
+});
+window.addEventListener('unhandledrejection', (e)=>{
+  console.error('Необработанная ошибка (promise):', e.reason);
+  if(document.getElementById('app') && document.getElementById('app').style.display!=='none') toast('Произошла ошибка: '+(e.reason?.message||e.reason||'см. консоль браузера (F12)'));
+});
+
 </script>
 </body>
 </html>
