@@ -117,7 +117,7 @@ input,select,textarea{font-family:var(--font-body);font-size:14px;}
 @keyframes spin{to{transform:rotate(360deg);}}
 
 #app{display:none;min-height:100vh;}
-.shell{display:grid;grid-template-columns:230px 1fr;min-height:100vh;}
+.shell{display:grid;grid-template-columns:230px minmax(0,1fr);min-height:100vh;}
 .sidebar{
   background:var(--wine);color:#F6E7E9;padding:24px 16px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;
 }
