@@ -201,6 +201,7 @@ input,select,textarea{font-family:var(--font-body);font-size:14px;}
 .daychip.st-done{background:var(--green);color:#fff;}
 .daychip.st-moved{background:var(--butter);color:var(--wine-dark);}
 .daychip.st-cancelled{background:var(--red);color:#fff;}
+.daychip.vacation{background:var(--pink-soft);color:var(--wine);font-size:12px;cursor:default;}
 
 .month-nav{display:flex;align-items:center;gap:10px;}
 .month-nav .lbl{font-family:var(--font-display);font-weight:700;min-width:150px;text-align:center;text-transform:capitalize;color:var(--wine);}
@@ -586,7 +587,7 @@ const TABS_TEACHER = [
   {id:'schedule', label:'Моё расписание', icon:'🗓'},
 ];
 
-let cache = { teachers:[], students:[], groups:[] };
+let cache = { teachers:[], students:[], groups:[], vacations:[] };
 let currentTeacherForSchedule = null;
 
 async function initApp(){
@@ -600,6 +601,7 @@ async function initApp(){
   await refreshTeachers();
   await refreshStudents();
   await refreshGroups();
+  await refreshVacations();
 
   currentTeacherForSchedule = session.role==='admin' ? (cache.teachers[0]?.id || null) : session.userId;
   if(session.role==='admin') populateScheduleTeacherSelect();
@@ -651,6 +653,19 @@ async function refreshGroups(){
   if(error){ toast('Ошибка загрузки групп: '+error.message); return; }
   cache.groups = data || [];
 }
+async function refreshVacations(){
+  let q = sb.from('vacations').select('*').order('date_from');
+  if(session.role==='teacher') q = q.eq('teacher_id', session.userId);
+  const { data, error } = await q;
+  if(error){ if(error.code!=='42P01') toast('Ошибка загрузки каникул: '+error.message); return; }
+  cache.vacations = data || [];
+}
+function isOnVacation(studentId, dateISO){
+  return cache.vacations.some(v=>v.student_id===studentId && dateISO>=v.date_from && dateISO<=v.date_to);
+}
+function vacationsOfStudent(studentId){
+  return cache.vacations.filter(v=>v.student_id===studentId).sort((a,b)=>a.date_from.localeCompare(b.date_from));
+}
 function teacherName(id){
   const t = cache.teachers.find(x=>x.id===id);
   return t ? (t.last_name+' '+t.first_name) : '—';
@@ -675,6 +690,7 @@ function setupRealtime(){
     .on('postgres_changes', {event:'*', schema:'public', table:'teachers'}, onRemoteChange('teachers', true))
     .on('postgres_changes', {event:'*', schema:'public', table:'groups'}, onRemoteChange('teachers', true))
     .on('postgres_changes', {event:'*', schema:'public', table:'mock_exams'}, onRemoteChange('students'))
+    .on('postgres_changes', {event:'*', schema:'public', table:'vacations'}, onRemoteChange('schedule', true))
     .on('postgres_changes', {event:'*', schema:'public', table:'expenses'}, onRemoteChange('admin'))
     .on('postgres_changes', {event:'*', schema:'public', table:'incomes'}, onRemoteChange('admin'))
     .subscribe();
@@ -685,7 +701,7 @@ function onRemoteChange(relevantTab, needsCoreRefresh){
   return async ()=>{
     clearTimeout(rtDebounce);
     rtDebounce = setTimeout(async ()=>{
-      if(needsCoreRefresh){ await refreshTeachers(); await refreshStudents(); await refreshGroups(); }
+      if(needsCoreRefresh){ await refreshTeachers(); await refreshStudents(); await refreshGroups(); await refreshVacations(); }
       // всегда безопасно перерисовать активную вкладку — данные внутри неё подгружаются заново
       if(activeTab==='teachers') renderTeachers();
       else if(activeTab==='students') renderStudents();
@@ -1017,6 +1033,11 @@ function studentFormHtml(s, isAdmin){
         ${(s.schedule&&s.schedule.length?s.schedule:[{day:1,time:'16:00'}]).map(sc=>scheduleRowHtml(sc, true)).join('')}
       </div>
       <button class="btn sm ghost" type="button" onclick="addScheduleRow('scheduleRows')">+ Добавить занятие</button>
+
+      <h3 style="margin-top:16px;">Каникулы</h3>
+      <p style="color:var(--ink-light);font-size:12px;margin-top:-6px;">В указанный период занятия по расписанию не проводятся и не учитываются в ведомостях.</p>
+      <ul class="subtle-list" id="vacationsList">${s.id ? vacationsListHtml(s.id) : '<li>Сначала сохраните ученика</li>'}</ul>
+      ${s.id ? `<button class="btn sm accent" onclick="openVacationModal('${s.id}')">+ Добавить каникулы</button>` : ''}
     </div>
 
     ${isAdmin?`<h3 style="margin-top:16px;">Оплата и ссылки</h3>
@@ -1075,6 +1096,50 @@ function toggleExamSections(studentId){
   if(btn) btn.style.display = (oge||ege) ? 'inline-flex':'none';
   if(none) none.style.display = (oge||ege)?'none':'block';
 }
+
+/* ---------- Каникулы ученика ---------- */
+function vacationsListHtml(studentId){
+  const list = vacationsOfStudent(studentId);
+  if(!list.length) return '<li>Каникулы пока не добавлены</li>';
+  return list.map(v=>`<li><span>${dayjs(v.date_from).format('DD.MM.YYYY')} — ${dayjs(v.date_to).format('DD.MM.YYYY')}${v.note?' · '+escapeHtml(v.note):''}</span>
+    <button class="btn sm ghost" onclick="deleteVacation('${studentId}','${v.id}')">✕</button></li>`).join('');
+}
+function openVacationModal(studentId){
+  const s = getStudent(studentId);
+  openOverlay(`<div class="modal narrow">
+    <div class="modal-head"><h2>Каникулы — ${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+    <div class="field"><label>С</label><input type="date" id="vacFrom" value="${dayjs().format('YYYY-MM-DD')}"></div>
+    <div class="field"><label>По</label><input type="date" id="vacTo" value="${dayjs().add(6,'day').format('YYYY-MM-DD')}"></div>
+    <div class="field"><label>Комментарий (необязательно)</label><input id="vacNote" placeholder="Напр. «Летние каникулы»"></div>
+    <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;">
+      <button class="btn ghost" onclick="openStudentModal('${studentId}')">Назад к ученику</button>
+      <button class="btn primary" onclick="saveVacation('${studentId}')">Сохранить</button>
+    </div>
+  </div>`);
+}
+async function saveVacation(studentId){
+  const s = getStudent(studentId);
+  const date_from = document.getElementById('vacFrom').value;
+  const date_to = document.getElementById('vacTo').value;
+  const note = document.getElementById('vacNote').value.trim();
+  if(!date_from || !date_to){ toast('Укажите обе даты'); return; }
+  if(dayjs(date_to).isBefore(dayjs(date_from))){ toast('Дата «по» раньше даты «с»'); return; }
+  const { error } = await sb.from('vacations').insert({ student_id:studentId, teacher_id:s.teacher_id, date_from, date_to, note });
+  if(error){
+    if(error.code==='42P01' || /does not exist/i.test(error.message)){ toast('Таблица «vacations» ещё не создана в Supabase — выполните SQL-миграцию'); return; }
+    toast('Ошибка: '+error.message); return;
+  }
+  await refreshVacations();
+  toast('Каникулы добавлены');
+  openStudentModal(studentId);
+}
+async function deleteVacation(studentId, vacationId){
+  const { error } = await sb.from('vacations').delete().eq('id', vacationId);
+  if(error){ toast('Ошибка: '+error.message); return; }
+  await refreshVacations();
+  openStudentModal(studentId);
+}
+
 function toggleStudentMode(){
   const grouped = document.getElementById('sMode').value==='group';
   document.getElementById('groupSelectBlock').style.display = grouped?'block':'none';
@@ -1745,9 +1810,9 @@ async function regenerateParentReport(studentId){
   let cur = dayjs(from);
   const end = dayjs(to);
   while(!cur.isAfter(end)){
-    if((scheduleEntity.schedule||[]).some(sc=>sc.day===cur.isoWeekday())){
+    const iso = cur.format('YYYY-MM-DD');
+    if((scheduleEntity.schedule||[]).some(sc=>sc.day===cur.isoWeekday()) && !(!grouped && isOnVacation(studentId, iso))){
       scheduled++;
-      const iso = cur.format('YYYY-MM-DD');
       const l = byDate[iso];
       const st = l ? l.status : (iso<today ? 'done' : 'planned');
       if(st==='done') done++;
@@ -1834,8 +1899,10 @@ async function fetchLessonsForAllRange(fromISO, toISO){
 
 function lessonsOnDate(teacherId, dateObj){
   const iso = dateObj.isoWeekday();
+  const dateISO = dateObj.format('YYYY-MM-DD');
   const out = [];
   studentsOfTeacher(teacherId).filter(s=>!s.group_id).forEach(s=>{
+    if(isOnVacation(s.id, dateISO)) return;
     (s.schedule||[]).forEach(sc=>{ if(sc.day===iso) out.push({kind:'student', id:s.id, label:s.last_name+' '+s.first_name[0]+'.', time:sc.time}); });
   });
   groupsOfTeacher(teacherId).forEach(g=>{
@@ -1998,7 +2065,7 @@ async function saveStatus(kind, id, dateISO){
 
 /* ---------- Сводная ведомость за месяц (без <table>, CSS-сетка) ---------- */
 function monthGridTemplate(daysInMonth){
-  return `170px repeat(${daysInMonth}, 28px) 70px 90px`;
+  return `170px repeat(${daysInMonth}, 28px) 70px 65px 65px 65px 65px 90px`;
 }
 async function renderMonthSummary(){
   const teacherId = session.role==='admin' ? currentTeacherForSchedule : session.userId;
@@ -2010,13 +2077,10 @@ async function renderMonthSummary(){
   const from = currentMonth.startOf('month').format('YYYY-MM-DD');
   const to = currentMonth.endOf('month').format('YYYY-MM-DD');
   await fetchLessonsForTeacherRange(teacherId, from, to);
+  await fetchPaymentsForRange(from, to);
 
   const students = studentsOfTeacher(teacherId).filter(s=>!s.group_id);
   const groups = groupsOfTeacher(teacherId);
-  const rowsData = [
-    ...students.map(s=>({kind:'student', id:s.id, name:s.last_name+' '+s.first_name, schedule:s.schedule, rate:s.teacher_rate})),
-    ...groups.map(g=>({kind:'group', id:g.id, name:'👥 '+g.name, schedule:g.schedule, rate:g.teacher_rate})),
-  ];
   const daysInMonth = currentMonth.daysInMonth();
   const today = dayjs().format('YYYY-MM-DD');
   const tmpl = monthGridTemplate(daysInMonth);
@@ -2026,10 +2090,14 @@ async function renderMonthSummary(){
     const dt = currentMonth.date(d);
     head += `<div class="cell ${dt.isoWeekday()>=6?'weekend':''}">${d}<br>${DAY_NAMES[dt.isoWeekday()-1]}</div>`;
   }
-  head += `<div class="cell">Занятий</div><div class="cell">Сумма</div></div>`;
+  head += `<div class="cell">Занятий</div><div class="cell">Пер.(уч)</div><div class="cell">Пер.(пр)</div><div class="cell">Отм.(уч)</div><div class="cell">Отм.(пр)</div><div class="cell">Сумма</div></div>`;
 
   let body = '';
-  let grandCount=0, grandSum=0;
+  let grandCount=0, grandSum=0, grandMovedS=0, grandMovedT=0, grandCancS=0, grandCancT=0;
+  const rowsData = [
+    ...students.map(s=>({kind:'student', id:s.id, name:s.last_name+' '+s.first_name, schedule:s.schedule, rate:s.teacher_rate, entity:s})),
+    ...groups.map(g=>({kind:'group', id:g.id, name:'👥 '+g.name, schedule:g.schedule, rate:g.teacher_rate, entity:g})),
+  ];
   rowsData.forEach(r=>{
     let row = `<div class="namecell">${escapeHtml(r.name)}</div>`;
     let count=0, sum=0;
@@ -2040,21 +2108,28 @@ async function renderMonthSummary(){
       const weekend = dt.isoWeekday()>=6;
       const cellCls = ['cell']; if(weekend) cellCls.push('weekend'); if(iso===today) cellCls.push('today');
       if(!scheduled){ row += `<div class="${cellCls.join(' ')}"><div class="daychip empty"></div></div>`; continue; }
+      if(r.kind==='student' && isOnVacation(r.id, iso)){ row += `<div class="${cellCls.join(' ')}"><div class="daychip vacation" title="Каникулы">🏖</div></div>`; continue; }
       const st = getStatus(r.kind, r.id, iso);
       if(st==='done'){ count++; sum += (r.rate||0); }
       row += `<div class="${cellCls.join(' ')}"><div class="daychip st-${st}" onclick="openStatusModal('${r.kind}','${r.id}','${iso}')" title="${STATUS_LABEL[st]}">${st==='planned'?'·':st[0].toUpperCase()}</div></div>`;
     }
-    row += `<div class="cell" style="font-weight:700;">${count}</div><div class="cell" style="font-weight:700;">${fmtMoney(sum)}</div>`;
-    grandCount+=count; grandSum+=sum;
+    const stats = r.kind==='student' ? studentMonthStats(r.entity, currentMonth) : groupMonthStats(r.entity, currentMonth);
+    row += `<div class="cell" style="font-weight:700;">${count}</div>
+      <div class="cell" style="cursor:pointer;text-decoration:underline dotted;" onclick="showBreakdownPopup('${r.kind}','${r.id}','moved')">${stats.movedS}</div>
+      <div class="cell">${stats.movedT}</div>
+      <div class="cell" style="cursor:pointer;text-decoration:underline dotted;" onclick="showBreakdownPopup('${r.kind}','${r.id}','cancelled')">${stats.cancS}</div>
+      <div class="cell">${stats.cancT}</div>
+      <div class="cell" style="font-weight:700;">${fmtMoney(sum)}</div>`;
+    grandCount+=count; grandSum+=sum; grandMovedS+=stats.movedS; grandMovedT+=stats.movedT; grandCancS+=stats.cancS; grandCancT+=stats.cancT;
     body += `<div class="ledger-row body" style="grid-template-columns:${tmpl};">${row}</div>`;
   });
 
   let foot = `<div class="namecell">Итого за месяц</div>`;
   for(let d=1; d<=daysInMonth; d++) foot += `<div class="cell"></div>`;
-  foot += `<div class="cell">${grandCount}</div><div class="cell">${fmtMoney(grandSum)}</div>`;
+  foot += `<div class="cell">${grandCount}</div><div class="cell">${grandMovedS}</div><div class="cell">${grandMovedT}</div><div class="cell">${grandCancS}</div><div class="cell">${grandCancT}</div><div class="cell">${fmtMoney(grandSum)}</div>`;
 
   container.innerHTML = rowsData.length ?
-    `<div class="ledger" style="min-width:${180+daysInMonth*28+160}px;">${head}${body}<div class="ledger-row foot" style="grid-template-columns:${tmpl};">${foot}</div></div>` :
+    `<div class="ledger" style="min-width:${180+daysInMonth*28+390}px;">${head}${body}<div class="ledger-row foot" style="grid-template-columns:${tmpl};">${foot}</div></div>` :
     `<div class="empty-state">У преподавателя пока нет учеников</div>`;
 }
 
@@ -2079,8 +2154,9 @@ function studentMonthStats(student, monthObj){
     const dt = monthObj.date(d);
     const isScheduled = (student.schedule||[]).some(sc=>sc.day===dt.isoWeekday());
     if(!isScheduled) continue;
-    scheduled++;
     const iso = dt.format('YYYY-MM-DD');
+    if(isOnVacation(student.id, iso)) continue; // каникулы — занятие не считается ни запланированным, ни состоявшимся
+    scheduled++;
     const st = getStatus('student', student.id, iso);
     if(st==='done') done++;
     else if(st==='moved'){ const l=getLesson('student',student.id,iso); if(l?.initiator==='teacher') movedT++; else movedS++; }
@@ -2163,20 +2239,15 @@ function renderAdminSummaryTable(){
   const container = document.getElementById('adminSummaryTable');
   const daysInMonth = currentMonth.daysInMonth();
   const today = dayjs().format('YYYY-MM-DD');
-  // дни-колонки + Занятий, Опл., Пер.(уч), Пер.(пр), Отм.(уч), Отм.(пр), Оплата план, Оплата факт, Ставка, Зарплата, Цена уч., Прибыль, Налог, Прибыль после налога
-  const tmpl = `190px repeat(${daysInMonth}, 26px) 60px 70px 60px 60px 60px 60px 100px 100px 80px 100px 90px 100px 90px 110px`;
+  // дни-колонки + Занятий, Опл., Оплата план, Оплата факт, Ставка, Зарплата, Цена уч., Прибыль, Налог, Прибыль после налога
+  const tmpl = `190px repeat(${daysInMonth}, 26px) 60px 70px 100px 100px 80px 100px 90px 100px 90px 110px`;
 
   let head = `<div class="ledger-row head" style="grid-template-columns:${tmpl};"><div class="namecell">Преподаватель / ученик</div>`;
   for(let d=1; d<=daysInMonth; d++){ const dt=currentMonth.date(d); head += `<div class="cell ${dt.isoWeekday()>=6?'weekend':''}">${d}<br>${DAY_NAMES[dt.isoWeekday()-1]}</div>`; }
-  head += `<div class="cell">Занятий</div><div class="cell">Опл.</div><div class="cell">Пер.(уч)</div><div class="cell">Пер.(пр)</div><div class="cell">Отм.(уч)</div><div class="cell">Отм.(пр)</div>
+  head += `<div class="cell">Занятий</div><div class="cell">Опл.</div>
     <div class="cell">Оплата (план)</div><div class="cell">Оплата (факт)</div><div class="cell">Ставка</div><div class="cell">Зарплата</div><div class="cell">Цена уч.</div>
     <div class="cell">Прибыль без налога</div><div class="cell">Налог 4%</div><div class="cell">Прибыль с налогом</div></div>`;
 
-  function rowCells(stats, priceLabel){
-    return `<div class="cell" style="font-weight:700;">${stats.done}</div>
-        <div class="cell" style="font-weight:700;">${stats.revenuePlan!==undefined?fmtMoney(stats.revenuePlan):''}</div>
-        <div class="cell">${stats.revenueFact!==undefined?fmtMoney(stats.revenueFact):''}</div>`;
-  }
   let body='';
   let totalDone=0, totalScheduled=0, totalPaidCount=0, totalRevenuePlan=0, totalRevenueFact=0, totalSalary=0, totalProfitBefore=0, totalTax=0, totalProfitAfter=0;
 
@@ -2197,15 +2268,12 @@ function renderAdminSummaryTable(){
         const weekend = dt.isoWeekday()>=6;
         const cellCls = ['cell']; if(weekend) cellCls.push('weekend'); if(iso===today) cellCls.push('today');
         if(!scheduled){ row += `<div class="${cellCls.join(' ')}"><div class="daychip empty"></div></div>`; continue; }
+        if(isOnVacation(s.id, iso)){ row += `<div class="${cellCls.join(' ')}"><div class="daychip vacation" title="Каникулы">🏖</div></div>`; continue; }
         const st = getStatus('student', s.id, iso);
         row += `<div class="${cellCls.join(' ')}"><div class="daychip st-${st}" onclick="openStatusModal('student','${s.id}','${iso}')" title="${STATUS_LABEL[st]}">${st==='planned'?'·':st[0].toUpperCase()}</div></div>`;
       }
       row += `<div class="cell" style="font-weight:700;">${stats.done}</div>
         <div class="cell" style="font-weight:700;cursor:pointer;text-decoration:underline dotted;" onclick="showPaymentsPopup('${s.id}')">${stats.paidCount}</div>
-        <div class="cell" style="cursor:pointer;text-decoration:underline dotted;" onclick="showBreakdownPopup('student','${s.id}','moved')">${stats.movedS}</div>
-        <div class="cell">${stats.movedT}</div>
-        <div class="cell" style="cursor:pointer;text-decoration:underline dotted;" onclick="showBreakdownPopup('student','${s.id}','cancelled')">${stats.cancS}</div>
-        <div class="cell">${stats.cancT}</div>
         <div class="cell">${fmtMoney(stats.revenuePlan)}</div>
         <div class="cell" style="font-weight:700;">${fmtMoney(stats.revenueFact)}</div>
         <div class="cell">${fmtMoney(s.teacher_rate)}</div>
@@ -2235,10 +2303,6 @@ function renderAdminSummaryTable(){
       }
       row += `<div class="cell" style="font-weight:700;">${gStats.done}</div>
         <div class="cell" style="font-weight:700;">${gStats.paidCount}</div>
-        <div class="cell" style="cursor:pointer;text-decoration:underline dotted;" onclick="showBreakdownPopup('group','${g.id}','moved')">${gStats.movedS}</div>
-        <div class="cell">${gStats.movedT}</div>
-        <div class="cell" style="cursor:pointer;text-decoration:underline dotted;" onclick="showBreakdownPopup('group','${g.id}','cancelled')">${gStats.cancS}</div>
-        <div class="cell">${gStats.cancT}</div>
         <div class="cell">${fmtMoney(gStats.revenuePlan)}</div>
         <div class="cell" style="font-weight:700;">${fmtMoney(gStats.revenueFact)}</div>
         <div class="cell">${fmtMoney(g.teacher_rate)}</div>
@@ -2263,7 +2327,6 @@ function renderAdminSummaryTable(){
         mrow += `<div class="cell">—</div>
           <div class="cell" style="cursor:pointer;text-decoration:underline dotted;" onclick="showPaymentsPopup('${m.id}')">${mPaidCount}</div>
           <div class="cell">—</div><div class="cell">—</div><div class="cell">—</div><div class="cell">—</div>
-          <div class="cell">—</div><div class="cell">—</div><div class="cell">—</div><div class="cell">—</div>
           <div class="cell">${fmtMoney(m.price)}</div>
           <div class="cell">—</div><div class="cell">—</div><div class="cell">—</div>`;
         body += `<div class="ledger-row body" style="grid-template-columns:${tmpl};">${mrow}</div>`;
@@ -2275,7 +2338,7 @@ function renderAdminSummaryTable(){
 
     let sumRow = `<div class="namecell">Итого по ${escapeHtml(t.last_name)}</div>`;
     for(let d=1; d<=daysInMonth; d++) sumRow += `<div class="cell"></div>`;
-    sumRow += `<div class="cell">${tDone}</div><div class="cell">${tPaidCount}</div><div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div>
+    sumRow += `<div class="cell">${tDone}</div><div class="cell">${tPaidCount}</div>
       <div class="cell">${fmtMoney(tRevenuePlan)}</div><div class="cell">${fmtMoney(tRevenueFact)}</div><div class="cell"></div>
       <div class="cell">${fmtMoney(tSalary)}</div><div class="cell"></div>
       <div class="cell">${fmtMoney(tProfitBefore)}</div><div class="cell">${fmtMoney(tTax)}</div><div class="cell">${fmtMoney(tProfitAfter)}</div>`;
@@ -2286,13 +2349,13 @@ function renderAdminSummaryTable(){
 
   let foot = `<div class="namecell">Общая сводка</div>`;
   for(let d=1; d<=daysInMonth; d++) foot += `<div class="cell"></div>`;
-  foot += `<div class="cell">${totalDone}</div><div class="cell">${totalPaidCount}</div><div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div>
+  foot += `<div class="cell">${totalDone}</div><div class="cell">${totalPaidCount}</div>
     <div class="cell">${fmtMoney(totalRevenuePlan)}</div><div class="cell">${fmtMoney(totalRevenueFact)}</div><div class="cell"></div>
     <div class="cell">${fmtMoney(totalSalary)}</div><div class="cell"></div>
     <div class="cell">${fmtMoney(totalProfitBefore)}</div><div class="cell">${fmtMoney(totalTax)}</div><div class="cell">${fmtMoney(totalProfitAfter)}</div>`;
 
   container.innerHTML = cache.teachers.length ?
-    `<div class="ledger" style="min-width:${210+daysInMonth*26+950}px;">${head}${body}<div class="ledger-row foot" style="grid-template-columns:${tmpl};">${foot}</div></div>` :
+    `<div class="ledger" style="min-width:${210+daysInMonth*26+800}px;">${head}${body}<div class="ledger-row foot" style="grid-template-columns:${tmpl};">${foot}</div></div>` :
     `<div class="empty-state">Нет данных</div>`;
 
   const otherExp = monthlyEquivalentTotal(expensesCache, currentMonth);
