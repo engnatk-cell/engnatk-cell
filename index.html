@@ -247,9 +247,9 @@ input,select,textarea{font-family:var(--font-body);font-size:14px;}
 .toast{position:fixed;bottom:22px;right:22px;background:var(--wine);color:#fff;padding:12px 20px;border-radius:999px;font-size:13px;font-weight:700;box-shadow:var(--shadow);z-index:200;opacity:0;transform:translateY(8px);transition:.25s;}
 .toast.show{opacity:1;transform:translateY(0);}
 
-/* ---------- Квадратный отчёт для родителей ---------- */
+/* ---------- Отчёт для родителей ---------- */
 .report-square{
-  width:640px;height:640px;background:linear-gradient(160deg,#fff 0%,var(--pink-soft) 100%);
+  width:640px;background:linear-gradient(160deg,#fff 0%,var(--pink-soft) 100%);
   border-radius:28px;padding:36px;display:flex;flex-direction:column;gap:14px;
   font-family:var(--font-body);
 }
@@ -260,8 +260,14 @@ input,select,textarea{font-family:var(--font-body);font-size:14px;}
 .report-stat{background:#fff;border-radius:16px;padding:12px 14px;}
 .report-stat .l{font-size:10.5px;color:var(--ink-light);text-transform:uppercase;font-family:var(--font-display);}
 .report-stat .v{font-family:var(--font-display);font-size:20px;font-weight:800;color:var(--wine);}
-.report-goals{background:#fff;border-radius:16px;padding:14px;font-size:12.5px;flex:1;overflow:hidden;}
-.report-chart-wrap{background:#fff;border-radius:16px;padding:10px;}
+.report-goals{background:#fff;border-radius:16px;padding:14px;font-size:12.5px;}
+.report-goals[contenteditable="true"]{outline:none;cursor:text;}
+.report-goals[contenteditable="true"]:focus{box-shadow:0 0 0 2px var(--pink);}
+.report-chart-wrap{background:#fff;border-radius:16px;padding:10px;position:relative;height:150px;overflow:hidden;display:flex;align-items:center;justify-content:center;}
+.report-chart-wrap canvas{max-height:130px!important;}
+.report-exams{background:#fff;border-radius:16px;padding:14px;font-size:12.5px;}
+.report-exams .exrow{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--grey);}
+.report-edit-hint{font-size:11px;color:var(--ink-light);text-align:center;margin-top:-6px;}
 
 /* ---------- Пробники ОГЭ/ЕГЭ ---------- */
 .lvl-bad{background:var(--red-soft);color:var(--red);}
@@ -283,7 +289,7 @@ input,select,textarea{font-family:var(--font-body);font-size:14px;}
   .main{padding:18px;}
   .form-grid{grid-template-columns:1fr;}
   .week-grid{grid-template-columns:repeat(2,1fr);}
-  .report-square{width:100%;height:auto;aspect-ratio:1/1;padding:22px;}
+  .report-square{width:100%;height:auto;padding:22px;}
   .report-stats{grid-template-columns:1fr 1fr;}
 }
 </style>
@@ -1667,21 +1673,43 @@ async function openParentReportModal(studentId, from, to){
   to = to || '';
   const isAdmin = session.role==='admin';
 
+  let examsCheckboxHtml = '';
+  if(s.exam_oge || s.exam_ege){
+    const { data: exams } = await sb.from('mock_exams').select('*').eq('student_id', studentId).order('date',{ascending:true});
+    window.__parentReportExams = exams || [];
+    examsCheckboxHtml = (exams&&exams.length) ? `
+      <div class="field full" style="margin-top:6px;">
+        <label>Результаты пробников для включения в отчёт (необязательно)</label>
+        <div class="simple-list" style="max-height:140px;overflow-y:auto;">
+          ${exams.map(ex=>{ const {score,max}=examTotals(ex.tasks||[]); return `<label class="simple-row" style="cursor:pointer;">
+            <input type="checkbox" class="prExamCheck" value="${ex.id}" style="margin-right:8px;">
+            <span class="name">${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'')} (${ex.exam_type==='oge'?'ОГЭ':'ЕГЭ'})</span>
+            <span class="meta2">${score}/${max}</span>
+          </label>`; }).join('')}
+        </div>
+      </div>` : `<p style="color:var(--ink-light);font-size:12px;">У ученика пока нет добавленных пробников.</p>`;
+  } else {
+    window.__parentReportExams = [];
+  }
+
   openOverlay(`<div class="modal wide">
     <div class="modal-head"><h2>Отчёт для родителя</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
     ${grouped ? `<p style="color:var(--ink-light);margin-top:-8px;font-size:12px;">Ученик занимается в группе «${escapeHtml(getGroup(s.group_id)?.name||'')}» — статусы занятий общие для группы, цена и комментарии — свои.</p>`:''}
     <p style="color:var(--ink-light);font-size:12.5px;margin-top:-4px;">Укажите период и нажмите «Сформировать» — отчёт соберётся за выбранные даты.</p>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px;">
       <div class="field" style="margin:0;"><label>С</label><input type="date" id="prFrom" value="${from}"></div>
       <div class="field" style="margin:0;"><label>По</label><input type="date" id="prTo" value="${to}"></div>
-      <button class="btn sm accent" onclick="regenerateParentReport('${studentId}')">Сформировать</button>
       <button class="btn sm ghost" onclick="quickRange('${studentId}','month')">Текущий месяц</button>
     </div>
-    <div style="display:flex;justify-content:center;">
+    ${examsCheckboxHtml}
+    <button class="btn sm accent" style="margin-top:10px;" onclick="regenerateParentReport('${studentId}')">Сформировать отчёт</button>
+
+    <div style="display:flex;justify-content:center;margin-top:16px;">
       <div class="report-square" id="parentReportSquare">
-        <div class="loading-state">Укажите даты периода и нажмите «Сформировать»</div>
+        <div class="loading-state">Укажите даты периода и нажмите «Сформировать отчёт»</div>
       </div>
     </div>
+    <p class="report-edit-hint" id="reportEditHint" style="display:none;">Текст целей и комментариев в отчёте можно кликнуть и отредактировать перед скачиванием.</p>
     <div style="display:flex;justify-content:center;gap:8px;margin-top:16px;">
       <button class="btn primary" onclick="exportNodeAsPNG('parentReportSquare','otchet-${escapeHtml(s.last_name)}')">⭳ Скачать PNG</button>
       <button class="btn primary" onclick="exportNodeAsPDF('parentReportSquare','otchet-${escapeHtml(s.last_name)}')">⭳ Скачать PDF</button>
@@ -1693,7 +1721,6 @@ function quickRange(studentId, kind){
     document.getElementById('prFrom').value = dayjs().startOf('month').format('YYYY-MM-DD');
     document.getElementById('prTo').value = dayjs().endOf('month').format('YYYY-MM-DD');
   }
-  regenerateParentReport(studentId);
 }
 async function regenerateParentReport(studentId){
   const s = getStudent(studentId);
@@ -1736,6 +1763,18 @@ async function regenerateParentReport(studentId){
   const personalComment = (ownReports||[]).map(r=>r.comments||r.content).filter(Boolean).join(' ');
   const goalsText = grouped ? (g?.goals || s.goals || 'Цели пока не заданы.') : (s.goals || 'Цели пока не заданы.');
 
+  // выбранные для отчёта пробники
+  const selectedExamIds = [...document.querySelectorAll('.prExamCheck:checked')].map(cb=>cb.value);
+  const selectedExams = (window.__parentReportExams||[]).filter(ex=>selectedExamIds.includes(ex.id));
+  const examsHtml = selectedExams.length ? `
+    <div class="report-exams">
+      <strong>Результаты пробников:</strong>
+      ${selectedExams.map(ex=>{
+        const {score,max} = examTotals(ex.tasks||[]);
+        return `<div class="exrow"><span>${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'')} (${ex.exam_type==='oge'?'ОГЭ':'ЕГЭ'})</span><span>${score}/${max} · ${examResultLabel(ex.exam_type,score,max)}</span></div>`;
+      }).join('')}
+    </div>` : '';
+
   document.getElementById('parentReportSquare').innerHTML = `
     <span class="r-eyebrow">${grouped?'Отчёт по ученику в группе «'+escapeHtml(g?.name||'')+'»':'Отчёт по ученику'}</span>
     <h2>${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</h2>
@@ -1746,15 +1785,17 @@ async function regenerateParentReport(studentId){
       <div class="report-stat"><div class="l">Перенесено</div><div class="v">${moved}</div></div>
       <div class="report-stat"><div class="l">Отменено</div><div class="v">${cancelled}</div></div>
     </div>
-    <div class="report-chart-wrap"><canvas id="parentReportChart" height="120"></canvas></div>
-    <div class="report-goals"><strong>Цели на учебный год:</strong><br>${escapeHtml(goalsText)}${personalComment?`<br><br><strong>Комментарии преподавателя за период:</strong><br>${escapeHtml(personalComment)}`:''}</div>
+    <div class="report-chart-wrap"><canvas id="parentReportChart"></canvas></div>
+    <div class="report-goals" contenteditable="true"><strong>Цели на учебный год:</strong><br>${escapeHtml(goalsText)}${personalComment?`<br><br><strong>Комментарии преподавателя за период:</strong><br>${escapeHtml(personalComment)}`:''}</div>
+    ${examsHtml}
   `;
+  document.getElementById('reportEditHint').style.display = 'block';
   const ctx = document.getElementById('parentReportChart');
   if(parentReportChart) parentReportChart.destroy();
   parentReportChart = new Chart(ctx, {
     type:'doughnut',
     data:{ labels:['Состоялось','Перенесено','Отменено'], datasets:[{ data:[done,moved,cancelled], backgroundColor:['#3E8E5D','#F6DE7A','#D6584D'], borderWidth:0 }] },
-    options:{ plugins:{ legend:{position:'bottom', labels:{boxWidth:10, font:{size:10.5}}} }, cutout:'62%' }
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom', labels:{boxWidth:10, font:{size:10.5}}} }, cutout:'62%' }
   });
 }
 
