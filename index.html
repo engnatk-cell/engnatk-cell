@@ -266,17 +266,14 @@ input,select,textarea{font-family:var(--font-body);font-size:14px;}
 .report-goals[contenteditable="true"]:focus{box-shadow:0 0 0 2px var(--pink);}
 .report-chart-wrap{background:#fff;border-radius:16px;padding:10px;position:relative;height:150px;overflow:hidden;display:flex;align-items:center;justify-content:center;}
 .report-chart-wrap canvas{max-height:130px!important;}
+.report-chart-wrap.tall{height:230px;}
+.report-chart-wrap.tall canvas{max-height:210px!important;}
 .report-exams{background:#fff;border-radius:16px;padding:14px;font-size:12.5px;}
 .report-exams .exrow{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--grey);}
 .report-edit-hint{font-size:11px;color:var(--ink-light);text-align:center;margin-top:-6px;}
 
 /* ---------- Отчёт по пробникам ---------- */
-.exam-report-card{width:720px;max-width:100%;background:#fff;border:1px solid var(--grey);border-radius:24px;padding:32px;display:flex;flex-direction:column;gap:16px;font-family:var(--font-body);}
-.exam-report-card .r-eyebrow{font-family:var(--font-display);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--pink);font-weight:700;}
-.exam-report-card h2{margin:0;}
-.exam-report-card .r-period{color:var(--ink-light);font-size:12.5px;}
-.exam-chart-wrap{background:var(--bg);border-radius:16px;padding:12px;position:relative;height:170px;overflow:hidden;}
-.exam-chart-wrap canvas{max-height:146px!important;}
+
 
 /* ---------- Пробники ОГЭ/ЕГЭ ---------- */
 .lvl-bad{background:var(--red-soft);color:var(--red);}
@@ -1691,7 +1688,7 @@ async function openMockExamsModal(studentId){
     <button class="btn sm accent" style="margin-top:10px;" onclick="regenerateMockExamsReport('${studentId}')">Сформировать отчёт</button>
 
     <div style="display:flex;justify-content:center;margin-top:16px;">
-      <div class="exam-report-card" id="mockExamsReportPreview">
+      <div class="report-square" id="mockExamsReportPreview" style="height:auto;">
         <div class="loading-state">Настройте параметры выше и нажмите «Сформировать отчёт»</div>
       </div>
     </div>
@@ -1730,13 +1727,13 @@ async function regenerateMockExamsReport(studentId){
     <h2>${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</h2>
     <div class="r-period">${periodLabel}</div>
 
-    ${includeTotals && ogeExams.length ? `<div><p style="font-weight:700;font-size:13px;margin-bottom:4px;">ОГЭ — оценка по пробникам</p><div class="exam-chart-wrap"><canvas id="examChartOge"></canvas></div></div>` : ''}
-    ${includeTotals && egeExams.length ? `<div><p style="font-weight:700;font-size:13px;margin-bottom:4px;">ЕГЭ — тестовый балл по пробникам</p><div class="exam-chart-wrap"><canvas id="examChartEge"></canvas></div></div>` : ''}
-    ${includeSections && exams.length ? `<div><p style="font-weight:700;font-size:13px;margin-bottom:4px;">Результаты по разделам (% от максимума)</p><div class="exam-chart-wrap" style="height:230px;"><canvas id="examChartSections"></canvas></div></div>` : ''}
+    ${includeTotals && ogeExams.length ? `<div><p style="font-weight:700;font-size:13px;margin-bottom:4px;">ОГЭ — оценка по пробникам</p><div class="report-chart-wrap"><canvas id="examChartOge"></canvas></div></div>` : ''}
+    ${includeTotals && egeExams.length ? `<div><p style="font-weight:700;font-size:13px;margin-bottom:4px;">ЕГЭ — тестовый балл по пробникам</p><div class="report-chart-wrap"><canvas id="examChartEge"></canvas></div></div>` : ''}
+    ${includeSections && exams.length ? `<div><p style="font-weight:700;font-size:13px;margin-bottom:4px;">Результаты по разделам (% от максимума)</p><div class="report-chart-wrap tall"><canvas id="examChartSections"></canvas></div></div>` : ''}
 
-    <div>
-      <h3 style="margin-top:0;">Список пробников</h3>
-      <div class="simple-list">
+    <div class="report-exams">
+      <strong>Список пробников</strong>
+      <div class="simple-list" style="margin-top:8px;">
         ${exams.map(ex=>{ const {score,max}=examTotals(ex.tasks||[]); return `<div class="simple-row"><span class="name">${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'')} (${ex.exam_type==='oge'?'ОГЭ':'ЕГЭ'})</span><span class="meta2">${score}/${max} · ${examResultLabel(ex.exam_type,score,max)}</span></div>${(includeComments&&ex.comment)?`<div class="simple-row" style="border:none;padding-top:0;color:var(--ink-light);font-size:12px;">Комментарий: ${escapeHtml(ex.comment)}</div>`:''}`; }).join('') || '<div class="simple-row">Ничего не выбрано</div>'}
       </div>
     </div>
@@ -1785,8 +1782,9 @@ async function regenerateMockExamsReport(studentId){
 function renderExamTableBlock(ex){
   const {score,max} = examTotals(ex.tasks||[]);
   const isEge = ex.exam_type==='ege';
-  return `<h3 style="margin-top:16px;">Таблица пробника: ${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'')}</h3>
-    <div class="exam-row head ${isEge?'ege':''}">
+  return `<div class="report-exams">
+    <strong>Таблица пробника: ${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'')}</strong>
+    <div class="exam-row head ${isEge?'ege':''}" style="margin-top:8px;">
       <div>Задание</div><div>Балл</div><div>Макс</div>${isEge?'<div>Прав.</div><div>Макс пр.</div>':''}<div>Результат</div>
     </div>
     ${(ex.tasks||[]).map(t=>{ const lvl=taskLevel(t.score,t.max); return `<div class="exam-row ${isEge?'ege':''}">
@@ -1796,7 +1794,8 @@ function renderExamTableBlock(ex){
       <div>Итого</div><div>${score}</div><div>${max}</div>${isEge?'<div></div><div></div>':''}<div>${examResultLabel(ex.exam_type,score,max)}</div>
     </div>
     ${ex.photos&&ex.photos.length? `<p style="margin-top:8px;font-size:12px;color:var(--ink-light);">Фото бланков: ${ex.photos.map((u,i)=>`<a href="${escapeHtml(u)}" target="_blank" rel="noopener">Фото ${i+1}</a>`).join(', ')}</p>` : ''}
-    ${ex.comment? `<p style="margin-top:6px;font-size:12.5px;"><strong>Комментарий:</strong> ${escapeHtml(ex.comment)}</p>` : ''}`;
+    ${ex.comment? `<p style="margin-top:6px;font-size:12.5px;"><strong>Комментарий:</strong> ${escapeHtml(ex.comment)}</p>` : ''}
+  </div>`;
 }
 
 /* ==================================================================
@@ -2663,28 +2662,60 @@ async function renderChart(){
 /* ==================================================================
    9. ЭКСПОРТ В PDF / PNG
    ================================================================== */
+/* Готовит для экспорта независимую копию узла вне модалки (без обрезания скроллом),
+   с «запечёнными» картинками вместо live-графиков Chart.js */
+function prepareExportClone(node){
+  const clone = node.cloneNode(true);
+  const origCanvases = node.querySelectorAll('canvas');
+  const cloneCanvases = clone.querySelectorAll('canvas');
+  origCanvases.forEach((c,i)=>{
+    if(!cloneCanvases[i]) return;
+    const img = document.createElement('img');
+    try{ img.src = c.toDataURL('image/png'); }catch(e){ return; }
+    img.style.width = c.offsetWidth ? c.offsetWidth+'px' : '100%';
+    img.style.height = c.offsetHeight ? c.offsetHeight+'px' : 'auto';
+    img.style.display = 'block';
+    img.style.margin = '0 auto';
+    cloneCanvases[i].replaceWith(img);
+  });
+  clone.style.maxHeight = 'none';
+  clone.style.height = 'auto';
+  clone.style.overflow = 'visible';
+  const wrapper = document.createElement('div');
+  wrapper.style.position = 'fixed';
+  wrapper.style.left = '-99999px';
+  wrapper.style.top = '0';
+  wrapper.style.zIndex = '-1';
+  wrapper.style.background = '#fff';
+  wrapper.appendChild(clone);
+  document.body.appendChild(wrapper);
+  return { wrapper, clone };
+}
 function exportNodeAsPDF(nodeId, filename){
   const node = document.getElementById(nodeId);
   if(!node){ toast('Нечего экспортировать'); return; }
   toast('Формируем PDF…');
+  const { wrapper, clone } = prepareExportClone(node);
   html2pdf().set({
     margin:8,
     filename:filename+'-'+dayjs().format('YYYY-MM-DD')+'.pdf',
     image:{type:'jpeg', quality:0.98},
-    html2canvas:{scale:2, useCORS:true},
+    html2canvas:{scale:2, useCORS:true, windowWidth:clone.scrollWidth, windowHeight:clone.scrollHeight},
     jsPDF:{unit:'mm', format:'a3', orientation:'landscape'}
-  }).from(node).save();
+  }).from(clone).save().then(()=>{ wrapper.remove(); }).catch((err)=>{ wrapper.remove(); toast('Ошибка формирования PDF: '+err.message); });
 }
 function exportNodeAsPNG(nodeId, filename){
   const node = document.getElementById(nodeId);
   if(!node){ toast('Нечего экспортировать'); return; }
   toast('Формируем PNG…');
-  html2canvas(node, {scale:2, useCORS:true}).then(canvas=>{
+  const { wrapper, clone } = prepareExportClone(node);
+  html2canvas(clone, {scale:2, useCORS:true, windowWidth:clone.scrollWidth, windowHeight:clone.scrollHeight}).then(canvas=>{
     const link = document.createElement('a');
     link.download = filename+'-'+dayjs().format('YYYY-MM-DD')+'.png';
     link.href = canvas.toDataURL('image/png');
     link.click();
-  });
+    wrapper.remove();
+  }).catch((err)=>{ wrapper.remove(); toast('Ошибка формирования PNG: '+err.message); });
 }
 
 /* ==================================================================
