@@ -181,6 +181,8 @@ input,select,textarea{font-family:var(--font-body);font-size:14px;}
 .ledger-row .namecell{
   text-align:left;padding-left:14px;font-weight:700;position:sticky;left:0;background:inherit;font-family:var(--font-body);
 }
+.namecell-link{cursor:pointer;}
+.namecell-link:hover{text-decoration:underline;color:var(--wine);}
 .ledger-row.body{background:#fff;border-bottom:1px solid var(--grey);}
 .ledger-row.body:nth-child(even){background:#FCFBF9;}
 .ledger-row.teacher-row{background:var(--wine-soft);font-family:var(--font-display);font-weight:700;padding:8px 0;}
@@ -880,7 +882,7 @@ function openGroupModal(groupId, teacherId){
     <h3 style="margin-top:16px;">Состав группы</h3>
     <p style="color:var(--ink-light);font-size:12px;margin-top:-6px;">${isAdmin?'У каждого ученика в группе — своя цена занятия. ':''}Расписание и статусы занятий — общие для всей группы.</p>
     <ul class="subtle-list">
-      ${members.length ? members.map(s=>`<li><span>${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}${isAdmin?` <span style="color:var(--ink-light);">— ${fmtMoney(s.price)}</span>`:''}</span>
+      ${members.length ? members.map(s=>`<li><span><span class="namecell-link" onclick="openStudentModal('${s.id}')">${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</span>${isAdmin?` <span style="color:var(--ink-light);">— ${fmtMoney(s.price)}</span>`:''}</span>
         <button class="btn sm ghost" onclick="removeFromGroup('${s.id}', ${groupId?`'${groupId}'`:'null'})">Убрать из группы</button></li>`).join('') : '<li>Пока никого нет</li>'}
     </ul>
     ${groupId ? `<div class="field" style="margin-top:10px;">
@@ -1013,13 +1015,13 @@ function studentFormHtml(s, isAdmin){
   return `
     <h3>Основные данные</h3>
     <div class="form-grid">
-      <div class="field"><label>Фамилия</label><input id="sLastName" value="${escapeHtml(s.last_name)}" ${isAdmin?'':'disabled'}></div>
-      <div class="field"><label>Имя</label><input id="sFirstName" value="${escapeHtml(s.first_name)}" ${isAdmin?'':'disabled'}></div>
-      <div class="field"><label>Дата рождения</label><input type="date" id="sBirth" value="${s.birth_date||''}" ${isAdmin?'':'disabled'}></div>
-      <div class="field"><label>Телефон</label><input id="sPhone" value="${escapeHtml(s.phone)}" ${isAdmin?'':'disabled'}></div>
-      <div class="field"><label>Канал связи</label><select id="sChannel" ${isAdmin?'':'disabled'}>${CHANNELS.map(c=>`<option ${s.channel===c?'selected':''}>${c}</option>`).join('')}</select></div>
+      <div class="field"><label>Фамилия</label><input id="sLastName" value="${escapeHtml(s.last_name)}"></div>
+      <div class="field"><label>Имя</label><input id="sFirstName" value="${escapeHtml(s.first_name)}"></div>
+      <div class="field"><label>Дата рождения</label><input type="date" id="sBirth" value="${s.birth_date||''}"></div>
+      <div class="field"><label>Телефон</label><input id="sPhone" value="${escapeHtml(s.phone)}"></div>
+      <div class="field"><label>Канал связи</label><select id="sChannel">${CHANNELS.map(c=>`<option ${s.channel===c?'selected':''}>${c}</option>`).join('')}</select></div>
       <div class="field"><label>Тип занятий</label>
-        <select id="sMode" ${isAdmin?'':'disabled'} onchange="toggleStudentMode()">
+        <select id="sMode" onchange="toggleStudentMode()">
           <option value="individual" ${!grouped?'selected':''}>Индивидуально</option>
           <option value="group" ${grouped?'selected':''}>В группе</option>
         </select>
@@ -1034,11 +1036,12 @@ function studentFormHtml(s, isAdmin){
           <label style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;color:var(--ink);"><input type="checkbox" id="sExamEge" ${s.exam_ege?'checked':''} onchange="toggleExamSections('${s.id||''}')" style="width:16px;height:16px;"> ЕГЭ</label>
         </div>
       </div>
+      <div class="field full"><label>Ссылка на Контур Толк</label><input id="sKontur" value="${escapeHtml(s.kontur_link||'')}"></div>
     </div>
 
     <div id="groupSelectBlock" style="display:${grouped?'block':'none'};margin-top:10px;">
       <div class="field"><label>Группа</label>
-        <select id="sGroupId" ${isAdmin?'':'disabled'}>${teacherGroups.map(g=>`<option value="${g.id}" ${s.group_id===g.id?'selected':''}>${escapeHtml(g.name)}</option>`).join('') || '<option value="">У преподавателя пока нет групп — создайте её на вкладке «Преподаватели»</option>'}</select>
+        <select id="sGroupId">${teacherGroups.map(g=>`<option value="${g.id}" ${s.group_id===g.id?'selected':''}>${escapeHtml(g.name)}</option>`).join('') || '<option value="">У преподавателя пока нет групп — создайте её на вкладке «Преподаватели»</option>'}</select>
       </div>
       <p style="color:var(--ink-light);font-size:12px;">Длительность, расписание и статусы занятий берутся из карточки группы.${isAdmin?' У ученика в группе — своя цена занятия (ниже).':''}</p>
     </div>
@@ -1066,7 +1069,6 @@ function studentFormHtml(s, isAdmin){
       <div class="field"><label>Цена занятия для этого ученика (₽)</label><input type="number" id="sPrice" value="${s.price||0}"></div>
       <div class="field" id="teacherRateFieldWrap" style="display:${grouped?'none':'block'};"><label>Ставка преподавателя за занятие (₽)</label><input type="number" id="sTeacherRate" value="${s.teacher_rate||0}"></div>
       <div class="field"><label>Преподаватель</label><select id="sTeacherId" onchange="onStudentTeacherChange()">${cache.teachers.map(t=>`<option value="${t.id}" ${s.teacher_id===t.id?'selected':''}>${escapeHtml(t.last_name)} ${escapeHtml(t.first_name)}</option>`).join('')}</select></div>
-      <div class="field"><label>Ссылка на Контур Толк</label><input id="sKontur" value="${escapeHtml(s.kontur_link||'')}"></div>
       <div class="field full"><label>ProgressMe (ID / данные)</label><input id="sProgressMe" value="${escapeHtml(s.progress_me||'')}"></div>
     </div>
 
@@ -1075,9 +1077,7 @@ function studentFormHtml(s, isAdmin){
       <div class="field"><label>Имя родителя</label><input id="sParentName" value="${escapeHtml(s.parent_name||'')}"></div>
       <div class="field"><label>Телефон родителя</label><input id="sParentPhone" value="${escapeHtml(s.parent_phone||'')}"></div>
       <div class="field full"><label>Канал связи с родителем</label><select id="sParentChannel">${CHANNELS.map(c=>`<option ${s.parent_channel===c?'selected':''}>${c}</option>`).join('')}</select></div>
-    </div>` : `
-    <div class="field full" style="margin-top:16px;"><label>Ссылка на Контур Толк</label><input value="${escapeHtml(s.kontur_link||'')}" disabled></div>
-    `}
+    </div>` : ''}
 
     <h3 style="margin-top:16px;">Цели и программа на 2026–2027 (индивидуальные)</h3>
     <div class="field full"><textarea id="sGoals" rows="3">${escapeHtml(s.goals||'')}</textarea></div>
@@ -1269,13 +1269,27 @@ async function saveStudent(id, isAdmin){
       data.teacher_rate = parseFloat(document.getElementById('sTeacherRate').value)||0;
     }
   } else {
-    data = { goals, grade, exam_oge, exam_ege };
+    data = { goals, grade, exam_oge, exam_ege,
+      last_name: document.getElementById('sLastName').value.trim(),
+      first_name: document.getElementById('sFirstName').value.trim(),
+      birth_date: document.getElementById('sBirth').value || null,
+      phone: document.getElementById('sPhone').value.trim(),
+      channel: document.getElementById('sChannel').value,
+      kontur_link: document.getElementById('sKontur').value.trim(),
+    };
     const grouped = document.getElementById('sMode').value==='group';
-    if(!grouped){
+    if(grouped){
+      const gId = document.getElementById('sGroupId').value;
+      if(!gId){ toast('Выберите группу или переключите тип занятий на «Индивидуально»'); return; }
+      data.group_id = gId;
+      data.duration = null;
+      data.schedule = [];
+    } else {
       const scheduleRows = [...document.querySelectorAll('#scheduleRows [data-row]')].map(row=>({
         day: parseInt(row.querySelector('.schedDay').value,10),
         time: row.querySelector('.schedTime').value,
       }));
+      data.group_id = null;
       data.duration = parseInt(document.getElementById('sDuration').value,10);
       data.schedule = scheduleRows;
     }
@@ -2179,7 +2193,7 @@ async function renderMonthSummary(){
     ...groups.map(g=>({kind:'group', id:g.id, name:'👥 '+g.name, schedule:g.schedule, rate:g.teacher_rate, entity:g})),
   ];
   rowsData.forEach(r=>{
-    let row = `<div class="namecell">${escapeHtml(r.name)}</div>`;
+    let row = `<div class="namecell"><span class="namecell-link" onclick="${r.kind==='group'?`openGroupModal('${r.id}')`:`openStudentModal('${r.id}')`}">${escapeHtml(r.name)}</span></div>`;
     let count=0, sum=0;
     for(let d=1; d<=daysInMonth; d++){
       const dt = currentMonth.date(d);
@@ -2340,7 +2354,7 @@ function renderAdminSummaryTable(){
 
     individualStudents.forEach(s=>{
       const stats = studentMonthStats(s, currentMonth);
-      let row = `<div class="namecell" style="padding-left:22px;">${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</div>`;
+      let row = `<div class="namecell" style="padding-left:22px;"><span class="namecell-link" onclick="openStudentModal('${s.id}')">${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</span></div>`;
       for(let d=1; d<=daysInMonth; d++){
         const dt = currentMonth.date(d);
         const iso = dt.format('YYYY-MM-DD');
@@ -2370,7 +2384,7 @@ function renderAdminSummaryTable(){
     teacherGroups.forEach(g=>{
       const gStats = groupMonthStats(g, currentMonth);
       const members = membersOfGroup(g.id);
-      let row = `<div class="namecell" style="padding-left:22px;">👥 ${escapeHtml(g.name)}</div>`;
+      let row = `<div class="namecell" style="padding-left:22px;">👥 <span class="namecell-link" onclick="openGroupModal('${g.id}')">${escapeHtml(g.name)}</span></div>`;
       for(let d=1; d<=daysInMonth; d++){
         const dt = currentMonth.date(d);
         const iso = dt.format('YYYY-MM-DD');
@@ -2396,7 +2410,7 @@ function renderAdminSummaryTable(){
       members.forEach(m=>{
         const mPays = paymentsInMonthCached(m.id, currentMonth);
         const mPaidCount = mPays.reduce((a,p)=>a+p.count,0);
-        let mrow = `<div class="namecell" style="padding-left:36px;color:var(--ink-light);">— ${escapeHtml(m.last_name)} ${escapeHtml(m.first_name)}</div>`;
+        let mrow = `<div class="namecell" style="padding-left:36px;color:var(--ink-light);">— <span class="namecell-link" onclick="openStudentModal('${m.id}')">${escapeHtml(m.last_name)} ${escapeHtml(m.first_name)}</span></div>`;
         for(let d=1; d<=daysInMonth; d++){
           const dt = currentMonth.date(d);
           const iso = dt.format('YYYY-MM-DD');
