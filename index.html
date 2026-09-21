@@ -2682,10 +2682,14 @@ function prepareExportClone(node){
   clone.style.height = 'auto';
   clone.style.overflow = 'visible';
   const wrapper = document.createElement('div');
+  // держим копию в обычной точке (0,0) страницы — экстремальное смещение
+  // (например left:-99999px) может дать html2canvas пустой холст
   wrapper.style.position = 'fixed';
-  wrapper.style.left = '-99999px';
+  wrapper.style.left = '0';
   wrapper.style.top = '0';
-  wrapper.style.zIndex = '-1';
+  wrapper.style.zIndex = '-9999';
+  wrapper.style.opacity = '0';
+  wrapper.style.pointerEvents = 'none';
   wrapper.style.background = '#fff';
   wrapper.appendChild(clone);
   document.body.appendChild(wrapper);
@@ -2696,26 +2700,30 @@ function exportNodeAsPDF(nodeId, filename){
   if(!node){ toast('Нечего экспортировать'); return; }
   toast('Формируем PDF…');
   const { wrapper, clone } = prepareExportClone(node);
-  html2pdf().set({
-    margin:8,
-    filename:filename+'-'+dayjs().format('YYYY-MM-DD')+'.pdf',
-    image:{type:'jpeg', quality:0.98},
-    html2canvas:{scale:2, useCORS:true, windowWidth:clone.scrollWidth, windowHeight:clone.scrollHeight},
-    jsPDF:{unit:'mm', format:'a3', orientation:'landscape'}
-  }).from(clone).save().then(()=>{ wrapper.remove(); }).catch((err)=>{ wrapper.remove(); toast('Ошибка формирования PDF: '+err.message); });
+  setTimeout(()=>{
+    html2pdf().set({
+      margin:8,
+      filename:filename+'-'+dayjs().format('YYYY-MM-DD')+'.pdf',
+      image:{type:'jpeg', quality:0.98},
+      html2canvas:{scale:2, useCORS:true, backgroundColor:'#ffffff'},
+      jsPDF:{unit:'mm', format:'a3', orientation:'landscape'}
+    }).from(clone).save().then(()=>{ wrapper.remove(); }).catch((err)=>{ wrapper.remove(); console.error('PDF export error:', err); toast('Ошибка формирования PDF: '+err.message); });
+  }, 50);
 }
 function exportNodeAsPNG(nodeId, filename){
   const node = document.getElementById(nodeId);
   if(!node){ toast('Нечего экспортировать'); return; }
   toast('Формируем PNG…');
   const { wrapper, clone } = prepareExportClone(node);
-  html2canvas(clone, {scale:2, useCORS:true, windowWidth:clone.scrollWidth, windowHeight:clone.scrollHeight}).then(canvas=>{
+  setTimeout(()=>{
+  html2canvas(clone, {scale:2, useCORS:true, backgroundColor:'#ffffff'}).then(canvas=>{
     const link = document.createElement('a');
     link.download = filename+'-'+dayjs().format('YYYY-MM-DD')+'.png';
     link.href = canvas.toDataURL('image/png');
     link.click();
     wrapper.remove();
-  }).catch((err)=>{ wrapper.remove(); toast('Ошибка формирования PNG: '+err.message); });
+  }).catch((err)=>{ wrapper.remove(); console.error('PNG export error:', err); toast('Ошибка формирования PNG: '+err.message); });
+  }, 50);
 }
 
 /* ==================================================================
