@@ -2701,12 +2701,19 @@ function exportNodeAsPDF(nodeId, filename){
   toast('Формируем PDF…');
   const { wrapper, clone } = prepareExportClone(node);
   setTimeout(()=>{
+    // ориентация и формат страницы подбираются под реальные пропорции контента:
+    // высокие узкие отчёты — книжная A4, широкие таблицы-ведомости — альбомная A3
+    const isWide = clone.scrollWidth > clone.scrollHeight;
+    const jsPDFOpts = isWide
+      ? {unit:'mm', format:'a3', orientation:'landscape'}
+      : {unit:'mm', format:'a4', orientation:'portrait'};
     html2pdf().set({
       margin:8,
       filename:filename+'-'+dayjs().format('YYYY-MM-DD')+'.pdf',
       image:{type:'jpeg', quality:0.98},
       html2canvas:{scale:2, useCORS:true, backgroundColor:'#ffffff'},
-      jsPDF:{unit:'mm', format:'a3', orientation:'landscape'}
+      jsPDF:jsPDFOpts,
+      pagebreak:{mode:['css','legacy']}
     }).from(clone).save().then(()=>{ wrapper.remove(); }).catch((err)=>{ wrapper.remove(); console.error('PDF export error:', err); toast('Ошибка формирования PDF: '+err.message); });
   }, 50);
 }
