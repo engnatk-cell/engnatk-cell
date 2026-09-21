@@ -176,7 +176,7 @@ input,select,textarea{font-family:var(--font-body);font-size:14px;}
 .ledger{border-radius:var(--radius-md);background:var(--grey);}
 .ledger-scroll{overflow-x:auto;}
 .ledger-row{display:grid;align-items:center;width:max-content;min-width:100%;}
-.ledger-row.head{background:var(--wine);color:#fff;font-family:var(--font-display);font-size:11px;font-weight:700;padding:10px 0;border-radius:var(--radius-md) var(--radius-md) 0 0;}
+.ledger-row.head{background:var(--wine);color:#fff;font-family:var(--font-display);font-size:11px;font-weight:700;padding:10px 0;}
 .ledger-row .cell{text-align:center;padding:4px 2px;font-size:11.5px;}
 .ledger-row .namecell{
   text-align:left;padding-left:14px;font-weight:700;position:sticky;left:0;background:inherit;font-family:var(--font-body);
@@ -185,7 +185,7 @@ input,select,textarea{font-family:var(--font-body);font-size:14px;}
 .ledger-row.body:nth-child(even){background:#FCFBF9;}
 .ledger-row.teacher-row{background:var(--wine-soft);font-family:var(--font-display);font-weight:700;padding:8px 0;}
 .ledger-row.teacher-row .namecell{background:var(--wine-soft);}
-.ledger-row.foot{background:var(--wine);color:#fff;font-weight:700;border-radius:0 0 var(--radius-md) var(--radius-md);padding:10px 0;}
+.ledger-row.foot{background:var(--wine);color:#fff;font-weight:700;padding:10px 0;}
 .ledger-row.foot .namecell{background:var(--wine);color:#fff;}
 .ledger-row.subtotal{background:var(--butter-soft);font-weight:700;}
 .ledger-row.subtotal .namecell{background:var(--butter-soft);}
@@ -269,6 +269,14 @@ input,select,textarea{font-family:var(--font-body);font-size:14px;}
 .report-exams{background:#fff;border-radius:16px;padding:14px;font-size:12.5px;}
 .report-exams .exrow{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--grey);}
 .report-edit-hint{font-size:11px;color:var(--ink-light);text-align:center;margin-top:-6px;}
+
+/* ---------- Отчёт по пробникам ---------- */
+.exam-report-card{width:720px;max-width:100%;background:#fff;border:1px solid var(--grey);border-radius:24px;padding:32px;display:flex;flex-direction:column;gap:16px;font-family:var(--font-body);}
+.exam-report-card .r-eyebrow{font-family:var(--font-display);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--pink);font-weight:700;}
+.exam-report-card h2{margin:0;}
+.exam-report-card .r-period{color:var(--ink-light);font-size:12.5px;}
+.exam-chart-wrap{background:var(--bg);border-radius:16px;padding:12px;position:relative;height:170px;overflow:hidden;}
+.exam-chart-wrap canvas{max-height:146px!important;}
 
 /* ---------- Пробники ОГЭ/ЕГЭ ---------- */
 .lvl-bad{background:var(--red-soft);color:var(--red);}
@@ -489,6 +497,21 @@ function taskLevel(score, max){
   if(score>=max) return {label:'Отлично', cls:'lvl-excellent'};
   const ratio = score/max;
   return ratio>=0.5 ? {label:'Хорошо', cls:'lvl-good'} : {label:'Удовлетворительно', cls:'lvl-ok'};
+}
+
+// Группировка заданий по разделам для графика "по разделам" в отчёте по пробникам
+const EXAM_SECTIONS = {
+  'Аудирование': ['Аудирование 1','Аудирование 2','Аудирование 3'],
+  'Чтение': ['Чтение 1','Чтение 2','Чтение 3'],
+  'Грамматика и лексика': ['Грамматика','Словообразование','Лексика'],
+  'Письмо': ['Письмо','Эссе'],
+  'Устная часть': ['Устная часть 1','Устная часть 2','Устная часть 3','Устная часть 4'],
+};
+function sectionScorePercent(exam, sectionTaskNames){
+  const tasks = (exam.tasks||[]).filter(t=>sectionTaskNames.includes(t.name));
+  const score = tasks.reduce((a,t)=>a+(Number(t.score)||0),0);
+  const max = tasks.reduce((a,t)=>a+(Number(t.max)||0),0);
+  return max>0 ? Math.round((score/max)*100) : null;
 }
 
 function uid(){ return crypto.randomUUID ? crypto.randomUUID() : 'id-'+Math.random().toString(36).slice(2); }
@@ -836,6 +859,7 @@ async function unassignStudent(studentId, teacherId){
 
 /* ---------- Карточка группы ---------- */
 function openGroupModal(groupId, teacherId){
+  const isAdmin = session.role==='admin';
   const g = groupId ? getGroup(groupId) : {name:'', duration:60, schedule:[{day:1,time:'16:00'}], teacher_rate:0, goals:''};
   teacherId = teacherId || g.teacher_id;
   const members = groupId ? membersOfGroup(groupId) : [];
@@ -857,9 +881,9 @@ function openGroupModal(groupId, teacherId){
     <div class="field full"><textarea id="gGoals" rows="3">${escapeHtml(g.goals||'')}</textarea></div>
 
     <h3 style="margin-top:16px;">Состав группы</h3>
-    <p style="color:var(--ink-light);font-size:12px;margin-top:-6px;">У каждого ученика в группе — своя цена занятия. Расписание и статусы занятий — общие для всей группы.</p>
+    <p style="color:var(--ink-light);font-size:12px;margin-top:-6px;">${isAdmin?'У каждого ученика в группе — своя цена занятия. ':''}Расписание и статусы занятий — общие для всей группы.</p>
     <ul class="subtle-list">
-      ${members.length ? members.map(s=>`<li><span>${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)} <span style="color:var(--ink-light);">— ${fmtMoney(s.price)}</span></span>
+      ${members.length ? members.map(s=>`<li><span>${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}${isAdmin?` <span style="color:var(--ink-light);">— ${fmtMoney(s.price)}</span>`:''}</span>
         <button class="btn sm ghost" onclick="removeFromGroup('${s.id}', ${groupId?`'${groupId}'`:'null'})">Убрать из группы</button></li>`).join('') : '<li>Пока никого нет</li>'}
     </ul>
     ${groupId ? `<div class="field" style="margin-top:10px;">
@@ -1019,7 +1043,7 @@ function studentFormHtml(s, isAdmin){
       <div class="field"><label>Группа</label>
         <select id="sGroupId" ${isAdmin?'':'disabled'}>${teacherGroups.map(g=>`<option value="${g.id}" ${s.group_id===g.id?'selected':''}>${escapeHtml(g.name)}</option>`).join('') || '<option value="">У преподавателя пока нет групп — создайте её на вкладке «Преподаватели»</option>'}</select>
       </div>
-      <p style="color:var(--ink-light);font-size:12px;">Длительность, расписание и статусы занятий берутся из карточки группы. У ученика в группе — своя цена занятия (ниже).</p>
+      <p style="color:var(--ink-light);font-size:12px;">Длительность, расписание и статусы занятий берутся из карточки группы.${isAdmin?' У ученика в группе — своя цена занятия (ниже).':''}</p>
     </div>
 
     <div id="individualScheduleBlock" style="display:${grouped?'none':'block'};">
@@ -1592,7 +1616,7 @@ async function deleteMockExam(studentId, examType, examId){
 }
 
 /* ---------- Отчёт по пробникам (прогресс + таблица конкретного пробника) ---------- */
-let mockExamsReportChart1 = null, mockExamsReportChart2 = null;
+let mockExamsReportChart1 = null, mockExamsReportChart2 = null, mockExamsReportChart3 = null;
 async function openMockExamsModal(studentId){
   const s = getStudent(studentId);
   const { data, error } = await sb.from('mock_exams').select('*').eq('student_id', studentId).order('date',{ascending:true});
@@ -1632,7 +1656,7 @@ async function openMockExamsModal(studentId){
       <button class="btn sm ghost" onclick="toggleAllExamChecks(true)">Выбрать все</button>
       <button class="btn sm ghost" onclick="toggleAllExamChecks(false)">Снять все</button>
     </div>
-    <div class="simple-list" id="examCheckList" style="max-height:200px;overflow-y:auto;">
+    <div class="simple-list" id="examCheckList" style="max-height:180px;overflow-y:auto;">
       ${exams.length ? exams.map(ex=>{
         const {score,max} = examTotals(ex.tasks||[]);
         return `<label class="simple-row" style="cursor:pointer;">
@@ -1642,13 +1666,36 @@ async function openMockExamsModal(studentId){
         </label>`;
       }).join('') : '<div class="simple-row">Пробников пока нет — добавьте хотя бы один выше</div>'}
     </div>
-    <div class="field" style="margin-top:12px;">
-      <label>Добавить в отчёт таблицу конкретного пробника (необязательно)</label>
-      <select id="examTableSelect"><option value="">Не добавлять</option>${exams.map(ex=>`<option value="${ex.id}">${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'')}</option>`).join('')}</select>
+
+    <div style="display:flex;flex-direction:column;gap:6px;margin-top:12px;">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;"><input type="checkbox" id="optChartTotals" checked> График итоговых баллов по пробникам</label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;"><input type="checkbox" id="optChartSections" checked> График по разделам (аудирование, чтение, грамматика и лексика, письмо, устная часть)</label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;"><input type="checkbox" id="optExamComments" checked> Комментарии преподавателя по каждому выбранному пробнику</label>
     </div>
+
+    <div class="field full" style="margin-top:10px;">
+      <label>Добавить полные таблицы результатов (выберите один или несколько пробников)</label>
+      <div class="simple-list" id="examTableCheckList" style="max-height:160px;overflow-y:auto;">
+        ${exams.length ? exams.map(ex=>`<label class="simple-row" style="cursor:pointer;">
+          <input type="checkbox" class="examTableCheck" value="${ex.id}" style="margin-right:8px;">
+          <span class="name">${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'')} (${ex.exam_type==='oge'?'ОГЭ':'ЕГЭ'})</span>
+        </label>`).join('') : '<div class="simple-row">Пробников пока нет</div>'}
+      </div>
+    </div>
+
+    <div class="field full">
+      <label>Комментарий ко всему отчёту (необязательно)</label>
+      <textarea id="reportOverallComment" rows="2" placeholder="Общий комментарий, который попадёт в конец отчёта"></textarea>
+    </div>
+
     <button class="btn sm accent" style="margin-top:10px;" onclick="regenerateMockExamsReport('${studentId}')">Сформировать отчёт</button>
 
-    <div id="mockExamsReportPreview" style="margin-top:16px;"></div>
+    <div style="display:flex;justify-content:center;margin-top:16px;">
+      <div class="exam-report-card" id="mockExamsReportPreview">
+        <div class="loading-state">Настройте параметры выше и нажмите «Сформировать отчёт»</div>
+      </div>
+    </div>
+    <p class="report-edit-hint">Комментарий к отчёту можно кликнуть и отредактировать перед скачиванием.</p>
 
     <div style="display:flex;justify-content:center;gap:8px;margin-top:16px;">
       <button class="btn primary" onclick="exportNodeAsPNG('mockExamsReportPreview','probniki-${escapeHtml(s.last_name)}')">⭳ Скачать PNG</button>
@@ -1662,42 +1709,76 @@ function toggleAllExamChecks(state){
 async function regenerateMockExamsReport(studentId){
   const s = getStudent(studentId);
   const selectedIds = [...document.querySelectorAll('.examCheck:checked')].map(cb=>cb.value);
-  const { data, error } = await sb.from('mock_exams').select('*').in('id', selectedIds.length?selectedIds:['00000000-0000-0000-0000-000000000000']).order('date',{ascending:true});
+  if(!selectedIds.length){ toast('Выберите хотя бы один пробник'); return; }
+  const { data, error } = await sb.from('mock_exams').select('*').in('id', selectedIds).order('date',{ascending:true});
   if(error){ toast('Ошибка: '+error.message); return; }
   const exams = data || [];
   const ogeExams = exams.filter(e=>e.exam_type==='oge');
   const egeExams = exams.filter(e=>e.exam_type==='ege');
-  const tableExamId = document.getElementById('examTableSelect').value;
-  const tableExam = tableExamId ? exams.find(e=>e.id===tableExamId) : null;
+
+  const includeTotals = document.getElementById('optChartTotals').checked;
+  const includeSections = document.getElementById('optChartSections').checked;
+  const includeComments = document.getElementById('optExamComments').checked;
+  const overallComment = document.getElementById('reportOverallComment').value.trim();
+  const tableExamIds = [...document.querySelectorAll('.examTableCheck:checked')].map(cb=>cb.value);
+  const tableExams = exams.filter(ex=>tableExamIds.includes(ex.id));
+  const periodLabel = exams.length ? `${dayjs(exams[0].date).format('D MMMM YYYY')} — ${dayjs(exams[exams.length-1].date).format('D MMMM YYYY')}` : '';
 
   const preview = document.getElementById('mockExamsReportPreview');
   preview.innerHTML = `
-    <h3>Прогресс по пробникам</h3>
-    ${ogeExams.length ? `<p style="font-weight:700;font-size:13px;margin-bottom:4px;">ОГЭ — оценка по пробникам</p><div class="report-chart-wrap" style="margin-bottom:14px;"><canvas id="examChartOge" height="90"></canvas></div>` : ''}
-    ${egeExams.length ? `<p style="font-weight:700;font-size:13px;margin-bottom:4px;">ЕГЭ — тестовый балл по пробникам</p><div class="report-chart-wrap" style="margin-bottom:14px;"><canvas id="examChartEge" height="90"></canvas></div>` : ''}
-    <h3 style="margin-top:10px;">Список пробников</h3>
-    <div class="simple-list">
-      ${exams.map(ex=>{ const {score,max}=examTotals(ex.tasks||[]); return `<div class="simple-row"><span class="name">${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'')} (${ex.exam_type==='oge'?'ОГЭ':'ЕГЭ'})</span><span class="meta2">${score}/${max} · ${examResultLabel(ex.exam_type,score,max)}</span></div>${ex.comment?`<div class="simple-row" style="border:none;padding-top:0;color:var(--ink-light);font-size:12px;">Комментарий: ${escapeHtml(ex.comment)}</div>`:''}`; }).join('') || '<div class="simple-row">Ничего не выбрано</div>'}
+    <span class="r-eyebrow">Отчёт по пробникам</span>
+    <h2>${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</h2>
+    <div class="r-period">${periodLabel}</div>
+
+    ${includeTotals && ogeExams.length ? `<div><p style="font-weight:700;font-size:13px;margin-bottom:4px;">ОГЭ — оценка по пробникам</p><div class="exam-chart-wrap"><canvas id="examChartOge"></canvas></div></div>` : ''}
+    ${includeTotals && egeExams.length ? `<div><p style="font-weight:700;font-size:13px;margin-bottom:4px;">ЕГЭ — тестовый балл по пробникам</p><div class="exam-chart-wrap"><canvas id="examChartEge"></canvas></div></div>` : ''}
+    ${includeSections && exams.length ? `<div><p style="font-weight:700;font-size:13px;margin-bottom:4px;">Результаты по разделам (% от максимума)</p><div class="exam-chart-wrap" style="height:230px;"><canvas id="examChartSections"></canvas></div></div>` : ''}
+
+    <div>
+      <h3 style="margin-top:0;">Список пробников</h3>
+      <div class="simple-list">
+        ${exams.map(ex=>{ const {score,max}=examTotals(ex.tasks||[]); return `<div class="simple-row"><span class="name">${dayjs(ex.date).format('DD.MM.YYYY')} — ${escapeHtml(ex.name||'')} (${ex.exam_type==='oge'?'ОГЭ':'ЕГЭ'})</span><span class="meta2">${score}/${max} · ${examResultLabel(ex.exam_type,score,max)}</span></div>${(includeComments&&ex.comment)?`<div class="simple-row" style="border:none;padding-top:0;color:var(--ink-light);font-size:12px;">Комментарий: ${escapeHtml(ex.comment)}</div>`:''}`; }).join('') || '<div class="simple-row">Ничего не выбрано</div>'}
+      </div>
     </div>
-    ${tableExam ? renderExamTableBlock(tableExam) : ''}
+
+    ${tableExams.map(ex=>renderExamTableBlock(ex)).join('')}
+
+    ${overallComment ? `<div class="report-goals" contenteditable="true"><strong>Комментарий к отчёту:</strong><br>${escapeHtml(overallComment)}</div>` : ''}
   `;
 
   if(mockExamsReportChart1){ mockExamsReportChart1.destroy(); mockExamsReportChart1=null; }
   if(mockExamsReportChart2){ mockExamsReportChart2.destroy(); mockExamsReportChart2=null; }
-  if(ogeExams.length){
+  if(mockExamsReportChart3){ mockExamsReportChart3.destroy(); mockExamsReportChart3=null; }
+
+  if(includeTotals && ogeExams.length){
     const ctx = document.getElementById('examChartOge');
     mockExamsReportChart1 = new Chart(ctx, {
       type:'line',
       data:{ labels: ogeExams.map(e=>dayjs(e.date).format('DD.MM')), datasets:[{ label:'Балл за пробник', data: ogeExams.map(e=>examTotals(e.tasks||[]).score), borderColor:'#62131b', backgroundColor:'rgba(98,19,27,.10)', tension:.3, fill:true }] },
-      options:{ plugins:{legend:{display:false}}, scales:{ y:{ min:0, max:68 } } }
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ y:{ min:0, max:68 } } }
     });
   }
-  if(egeExams.length){
+  if(includeTotals && egeExams.length){
     const ctx = document.getElementById('examChartEge');
     mockExamsReportChart2 = new Chart(ctx, {
       type:'line',
       data:{ labels: egeExams.map(e=>dayjs(e.date).format('DD.MM')), datasets:[{ label:'Тестовый балл', data: egeExams.map(e=>egeTestScore(examTotals(e.tasks||[]).score)), borderColor:'#3E8E5D', backgroundColor:'rgba(62,142,93,.10)', tension:.3, fill:true }] },
-      options:{ plugins:{legend:{display:false}}, scales:{ y:{ min:0, max:100 } } }
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ y:{ min:0, max:100 } } }
+    });
+  }
+  if(includeSections && exams.length){
+    const sectionNames = Object.keys(EXAM_SECTIONS);
+    const colors = ['#62131b','#ee99af','#D68A00','#3E8E5D','#4C5C79'];
+    const datasets = sectionNames.map((name,i)=>({
+      label:name,
+      data: exams.map(ex=>sectionScorePercent(ex, EXAM_SECTIONS[name])),
+      borderColor:colors[i], backgroundColor:colors[i], tension:.3, spanGaps:true, fill:false,
+    }));
+    const ctx = document.getElementById('examChartSections');
+    mockExamsReportChart3 = new Chart(ctx, {
+      type:'line',
+      data:{ labels: exams.map(e=>dayjs(e.date).format('DD.MM')), datasets },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom', labels:{boxWidth:10, font:{size:10}}}}, scales:{ y:{ min:0, max:100, ticks:{callback:v=>v+'%'} } } }
     });
   }
 }
