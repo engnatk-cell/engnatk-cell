@@ -204,6 +204,7 @@ input,select,textarea{font-family:var(--font-body);font-size:14px;}
 .daychip.st-moved{background:var(--butter);color:var(--wine-dark);}
 .daychip.st-cancelled{background:var(--red);color:#fff;}
 .daychip.vacation{background:var(--pink-soft);color:var(--wine);font-size:12px;cursor:default;}
+.daychip.extra{outline:2px solid var(--butter);outline-offset:-2px;}
 
 .month-nav{display:flex;align-items:center;gap:10px;}
 .month-nav .lbl{font-family:var(--font-display);font-weight:700;min-width:150px;text-align:center;text-transform:capitalize;color:var(--wine);}
@@ -685,8 +686,17 @@ async function refreshVacations(){
 function isOnVacation(studentId, dateISO){
   return cache.vacations.some(v=>v.student_id===studentId && dateISO>=v.date_from && dateISO<=v.date_to);
 }
+function vacationEntryFor(studentId, dateISO){
+  return cache.vacations.find(v=>v.student_id===studentId && dateISO>=v.date_from && dateISO<=v.date_to);
+}
+function isGroupOnVacation(groupId, dateISO){
+  return cache.vacations.some(v=>v.group_id===groupId && dateISO>=v.date_from && dateISO<=v.date_to);
+}
 function vacationsOfStudent(studentId){
   return cache.vacations.filter(v=>v.student_id===studentId).sort((a,b)=>a.date_from.localeCompare(b.date_from));
+}
+function vacationsOfGroup(groupId){
+  return cache.vacations.filter(v=>v.group_id===groupId).sort((a,b)=>a.date_from.localeCompare(b.date_from));
 }
 function teacherName(id){
   const t = cache.teachers.find(x=>x.id===id);
@@ -713,6 +723,7 @@ function setupRealtime(){
     .on('postgres_changes', {event:'*', schema:'public', table:'groups'}, onRemoteChange('teachers', true))
     .on('postgres_changes', {event:'*', schema:'public', table:'mock_exams'}, onRemoteChange('students'))
     .on('postgres_changes', {event:'*', schema:'public', table:'vacations'}, onRemoteChange('schedule', true))
+    .on('postgres_changes', {event:'*', schema:'public', table:'extra_lessons'}, onRemoteChange('schedule'))
     .on('postgres_changes', {event:'*', schema:'public', table:'expenses'}, onRemoteChange('admin'))
     .on('postgres_changes', {event:'*', schema:'public', table:'incomes'}, onRemoteChange('admin'))
     .subscribe();
@@ -893,6 +904,11 @@ function openGroupModal(groupId, teacherId){
       </div>
     </div>` : `<p style="color:var(--ink-light);font-size:12px;">Сохраните группу, затем добавьте в неё учеников.</p>`}
 
+    ${groupId ? `<h3 style="margin-top:20px;">Каникулы группы</h3>
+    <p style="color:var(--ink-light);font-size:12px;margin-top:-6px;">В указанный период занятия группы по расписанию не проводятся и не учитываются в ведомостях.</p>
+    <ul class="subtle-list" id="groupVacationsList">${groupVacationsListHtml(groupId)}</ul>
+    <button class="btn sm accent" onclick="openGroupVacationModal('${groupId}')">+ Добавить каникулы группы</button>` : ''}
+
     ${groupId ? `<h3 style="margin-top:20px;">Программа и итоги месяца (для всей группы)</h3>
     <ul class="subtle-list" id="groupReportsList"><li>Загрузка…</li></ul>
     <button class="btn sm accent" onclick="openGroupReportModal('${groupId}')">+ Отчёт за месяц</button>` : ''}
@@ -1057,12 +1073,12 @@ function studentFormHtml(s, isAdmin){
         ${(s.schedule&&s.schedule.length?s.schedule:[{day:1,time:'16:00'}]).map(sc=>scheduleRowHtml(sc, true)).join('')}
       </div>
       <button class="btn sm ghost" type="button" onclick="addScheduleRow('scheduleRows')">+ Добавить занятие</button>
-
-      <h3 style="margin-top:16px;">Каникулы</h3>
-      <p style="color:var(--ink-light);font-size:12px;margin-top:-6px;">В указанный период занятия по расписанию не проводятся и не учитываются в ведомостях.</p>
-      <ul class="subtle-list" id="vacationsList">${s.id ? vacationsListHtml(s.id) : '<li>Сначала сохраните ученика</li>'}</ul>
-      ${s.id ? `<button class="btn sm accent" onclick="openVacationModal('${s.id}')">+ Добавить каникулы</button>` : ''}
     </div>
+
+    <h3 style="margin-top:16px;">Каникулы${grouped?' ученика (в группе)':''}</h3>
+    <p style="color:var(--ink-light);font-size:12px;margin-top:-6px;">${grouped ? 'Группа при этом продолжает заниматься с остальными учениками. Ниже можно отметить, оплачивает ли ученик пропущенные им занятия.' : 'В указанный период занятия по расписанию не проводятся и не учитываются в ведомостях.'}</p>
+    <ul class="subtle-list" id="vacationsList">${s.id ? vacationsListHtml(s.id) : '<li>Сначала сохраните ученика</li>'}</ul>
+    ${s.id ? `<button class="btn sm accent" onclick="openVacationModal('${s.id}')">+ Добавить каникулы</button>` : ''}
 
     ${isAdmin?`<h3 style="margin-top:16px;">Оплата и ссылки</h3>
     <div class="form-grid">
@@ -1122,16 +1138,20 @@ function toggleExamSections(studentId){
 function vacationsListHtml(studentId){
   const list = vacationsOfStudent(studentId);
   if(!list.length) return '<li>Каникулы пока не добавлены</li>';
-  return list.map(v=>`<li><span>${dayjs(v.date_from).format('DD.MM.YYYY')} — ${dayjs(v.date_to).format('DD.MM.YYYY')}${v.note?' · '+escapeHtml(v.note):''}</span>
+  const grouped = isGrouped(getStudent(studentId));
+  return list.map(v=>`<li><span>${dayjs(v.date_from).format('DD.MM.YYYY')} — ${dayjs(v.date_to).format('DD.MM.YYYY')}${v.note?' · '+escapeHtml(v.note):''}${grouped?` · ${v.paid===false?'<span style=\"color:var(--red);\">не оплачивает</span>':'<span style=\"color:var(--green);\">оплачивает</span>'}`:''}</span>
     <button class="btn sm ghost" onclick="deleteVacation('${studentId}','${v.id}')">✕</button></li>`).join('');
 }
 function openVacationModal(studentId){
   const s = getStudent(studentId);
+  const grouped = isGrouped(s);
   openOverlay(`<div class="modal narrow">
     <div class="modal-head"><h2>Каникулы — ${escapeHtml(s.last_name)} ${escapeHtml(s.first_name)}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
     <div class="field"><label>С</label><input type="date" id="vacFrom" value="${dayjs().format('YYYY-MM-DD')}"></div>
     <div class="field"><label>По</label><input type="date" id="vacTo" value="${dayjs().add(6,'day').format('YYYY-MM-DD')}"></div>
     <div class="field"><label>Комментарий (необязательно)</label><input id="vacNote" placeholder="Напр. «Летние каникулы»"></div>
+    ${grouped ? `<div class="field"><label style="display:flex;align-items:center;gap:8px;font-weight:600;"><input type="checkbox" id="vacPaid" checked style="width:16px;height:16px;"> Ученик оплачивает занятия группы в этот период</label></div>
+    <p style="color:var(--ink-light);font-size:12px;margin-top:-4px;">Группа продолжает заниматься с остальными. Снимите галочку, если за пропущенные занятия платить не нужно — тогда они не войдут в ожидаемую выручку по этому ученику.</p>` : ''}
     <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;">
       <button class="btn ghost" onclick="openStudentModal('${studentId}')">Назад к ученику</button>
       <button class="btn primary" onclick="saveVacation('${studentId}')">Сохранить</button>
@@ -1145,7 +1165,10 @@ async function saveVacation(studentId){
   const note = document.getElementById('vacNote').value.trim();
   if(!date_from || !date_to){ toast('Укажите обе даты'); return; }
   if(dayjs(date_to).isBefore(dayjs(date_from))){ toast('Дата «по» раньше даты «с»'); return; }
-  const { error } = await sb.from('vacations').insert({ student_id:studentId, teacher_id:s.teacher_id, date_from, date_to, note });
+  const payload = { student_id:studentId, teacher_id:s.teacher_id, date_from, date_to, note };
+  const paidEl = document.getElementById('vacPaid');
+  if(paidEl) payload.paid = paidEl.checked;
+  const { error } = await sb.from('vacations').insert(payload);
   if(error){
     if(error.code==='42P01' || /does not exist/i.test(error.message)){ toast('Таблица «vacations» ещё не создана в Supabase — выполните SQL-миграцию'); return; }
     toast('Ошибка: '+error.message); return;
@@ -1159,6 +1182,49 @@ async function deleteVacation(studentId, vacationId){
   if(error){ toast('Ошибка: '+error.message); return; }
   await refreshVacations();
   openStudentModal(studentId);
+}
+
+/* ---------- Каникулы группы ---------- */
+function groupVacationsListHtml(groupId){
+  const list = vacationsOfGroup(groupId);
+  if(!list.length) return '<li>Каникулы пока не добавлены</li>';
+  return list.map(v=>`<li><span>${dayjs(v.date_from).format('DD.MM.YYYY')} — ${dayjs(v.date_to).format('DD.MM.YYYY')}${v.note?' · '+escapeHtml(v.note):''}</span>
+    <button class="btn sm ghost" onclick="deleteGroupVacation('${groupId}','${v.id}')">✕</button></li>`).join('');
+}
+function openGroupVacationModal(groupId){
+  const g = getGroup(groupId);
+  openOverlay(`<div class="modal narrow">
+    <div class="modal-head"><h2>Каникулы группы — ${escapeHtml(g.name)}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+    <div class="field"><label>С</label><input type="date" id="gVacFrom" value="${dayjs().format('YYYY-MM-DD')}"></div>
+    <div class="field"><label>По</label><input type="date" id="gVacTo" value="${dayjs().add(6,'day').format('YYYY-MM-DD')}"></div>
+    <div class="field"><label>Комментарий (необязательно)</label><input id="gVacNote" placeholder="Напр. «Каникулы школы»"></div>
+    <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;">
+      <button class="btn ghost" onclick="openGroupModal('${groupId}')">Назад к группе</button>
+      <button class="btn primary" onclick="saveGroupVacation('${groupId}')">Сохранить</button>
+    </div>
+  </div>`);
+}
+async function saveGroupVacation(groupId){
+  const g = getGroup(groupId);
+  const date_from = document.getElementById('gVacFrom').value;
+  const date_to = document.getElementById('gVacTo').value;
+  const note = document.getElementById('gVacNote').value.trim();
+  if(!date_from || !date_to){ toast('Укажите обе даты'); return; }
+  if(dayjs(date_to).isBefore(dayjs(date_from))){ toast('Дата «по» раньше даты «с»'); return; }
+  const { error } = await sb.from('vacations').insert({ group_id:groupId, teacher_id:g.teacher_id, date_from, date_to, note });
+  if(error){
+    if(error.code==='42P01' || /does not exist/i.test(error.message)){ toast('Таблица «vacations» ещё не создана в Supabase — выполните SQL-миграцию'); return; }
+    toast('Ошибка: '+error.message); return;
+  }
+  await refreshVacations();
+  toast('Каникулы группы добавлены');
+  openGroupModal(groupId);
+}
+async function deleteGroupVacation(groupId, vacationId){
+  const { error } = await sb.from('vacations').delete().eq('id', vacationId);
+  if(error){ toast('Ошибка: '+error.message); return; }
+  await refreshVacations();
+  openGroupModal(groupId);
 }
 
 function toggleStudentMode(){
@@ -1215,7 +1281,51 @@ async function loadPaymentsIntoModal(studentId, isAdmin){
   if(!el) return;
   if(error){ el.innerHTML = '<li>Ошибка загрузки</li>'; return; }
   el.innerHTML = (data&&data.length) ? data.map(p=>`<li><span>${dayjs(p.date).format('DD.MM.YYYY')} · ${p.count} занятий · ${escapeHtml(p.method||'')}${p.period_from?` · период ${dayjs(p.period_from).format('DD.MM')}–${dayjs(p.period_to).format('DD.MM.YYYY')}`:''}</span>
-    <span>${fmtMoney(p.amount)} <button class="btn sm ghost" onclick="removePayment('${studentId}','${p.id}')">✕</button></span></li>`).join('') : '<li>Оплат пока нет</li>';
+    <span>${fmtMoney(p.amount)} <button class="btn sm ghost" onclick="openEditPaymentModal('${studentId}','${p.id}')">✎</button> <button class="btn sm ghost" onclick="removePayment('${studentId}','${p.id}')">✕</button></span></li>`).join('') : '<li>Оплат пока нет</li>';
+}
+async function openEditPaymentModal(studentId, paymentId){
+  const { data: p, error } = await sb.from('payments').select('*').eq('id', paymentId).maybeSingle();
+  if(error || !p){ toast('Ошибка загрузки оплаты'); return; }
+  const knownBanks = ['Т-Банк','Сбербанк','Яндекс Банк','Наличные'];
+  const isOther = !knownBanks.includes(p.method);
+  openOverlay(`<div class="modal narrow">
+    <div class="modal-head"><h2>Изменить оплату</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+    <div class="form-grid">
+      <div class="field"><label>Дата оплаты</label><input type="date" id="editPayDate" value="${p.date}"></div>
+      <div class="field"><label>Сумма (₽)</label><input type="number" id="editPayAmount" value="${p.amount||0}"></div>
+      <div class="field"><label>Количество оплаченных занятий</label><input type="number" id="editPayCount" value="${p.count||0}"></div>
+      <div class="field"><label>Карта / банк поступления</label>
+        <select id="editPayBank" onchange="toggleEditPayBankOther()">
+          ${knownBanks.map(b=>`<option ${p.method===b?'selected':''}>${b}</option>`).join('')}
+          <option value="other" ${isOther?'selected':''}>Другое (указать)</option>
+        </select>
+      </div>
+      <div class="field full" id="editPayBankOtherWrap" style="display:${isOther?'block':'none'};"><label>Укажите банк</label><input id="editPayBankOther" value="${isOther?escapeHtml(p.method||''):''}" placeholder="Название банка"></div>
+      <div class="field"><label>Период оплаты — с</label><input type="date" id="editPayPeriodFrom" value="${p.period_from||''}"></div>
+      <div class="field"><label>Период оплаты — по</label><input type="date" id="editPayPeriodTo" value="${p.period_to||''}"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;">
+      <button class="btn ghost" onclick="openStudentModal('${studentId}')">Назад к ученику</button>
+      <button class="btn primary" onclick="saveEditPayment('${studentId}','${paymentId}')">Сохранить</button>
+    </div>
+  </div>`);
+}
+function toggleEditPayBankOther(){
+  document.getElementById('editPayBankOtherWrap').style.display = document.getElementById('editPayBank').value==='other' ? 'block':'none';
+}
+async function saveEditPayment(studentId, paymentId){
+  const date = document.getElementById('editPayDate').value;
+  const amount = parseFloat(document.getElementById('editPayAmount').value)||0;
+  const count = parseInt(document.getElementById('editPayCount').value,10)||0;
+  const bankSel = document.getElementById('editPayBank').value;
+  const method = bankSel==='other' ? (document.getElementById('editPayBankOther').value.trim()||'Другое') : bankSel;
+  const period_from = document.getElementById('editPayPeriodFrom').value || null;
+  const period_to = document.getElementById('editPayPeriodTo').value || null;
+  if(!date || count<=0){ toast('Укажите дату и количество занятий'); return; }
+  const { error } = await sb.from('payments').update({ date, amount, count, method, period_from, period_to }).eq('id', paymentId);
+  if(error){ toast('Ошибка: '+error.message); return; }
+  toast('Оплата изменена');
+  openStudentModal(studentId);
 }
 async function loadReportsIntoModal(studentId){
   const { data, error } = await sb.from('reports').select('*').eq('student_id', studentId).order('month',{ascending:false});
@@ -1223,7 +1333,14 @@ async function loadReportsIntoModal(studentId){
   if(!el) return;
   if(error){ el.innerHTML = '<li>Ошибка загрузки</li>'; return; }
   el.innerHTML = (data&&data.length) ? data.map(r=>`<li><span><strong>${r.month}</strong> — ${escapeHtml((r.content||r.comments||'').slice(0,60))}${(r.content||r.comments||'').length>60?'…':''}</span>
-    <button class="btn sm ghost" onclick="openReportModal('${studentId}','${r.id}')">Открыть</button></li>`).join('') : '<li>Пока нет записей</li>';
+    <span><button class="btn sm ghost" onclick="openReportModal('${studentId}','${r.id}')">Открыть</button> <button class="btn sm ghost" onclick="deleteReportInline('${studentId}','${r.id}')">✕</button></span></li>`).join('') : '<li>Пока нет записей</li>';
+}
+async function deleteReportInline(studentId, reportId){
+  if(!confirm('Точно удалить этот комментарий за месяц?')) return;
+  const { error } = await sb.from('reports').delete().eq('id', reportId);
+  if(error){ toast('Ошибка: '+error.message); return; }
+  toast('Комментарий удалён');
+  loadReportsIntoModal(studentId);
 }
 
 async function saveStudent(id, isAdmin){
@@ -1372,6 +1489,7 @@ async function saveReport(studentId, reportId){
   closeOverlay(); renderStudents(); toast('Сохранено');
 }
 async function deleteReport(studentId, reportId){
+  if(!confirm('Точно удалить этот комментарий за месяц?')) return;
   const { error } = await sb.from('reports').delete().eq('id', reportId);
   if(error){ toast('Ошибка: '+error.message); return; }
   closeOverlay(); renderStudents();
@@ -1965,6 +2083,7 @@ async function regenerateParentReport(studentId){
 let currentWeekStart = dayjs().startOf('isoWeek');
 let currentMonth = dayjs().startOf('month');
 let lessonsCache = {}; // key: 'student:ID|DATE' или 'group:ID|DATE' -> lesson row
+let extraLessonsCache = {}; // key: 'student:ID|DATE' или 'group:ID|DATE' -> {id, duration, rate}
 
 function lessonKey(kind, id, dateISO){ return kind+':'+id+'|'+dateISO; }
 function todayISO(){ return dayjs().format('YYYY-MM-DD'); }
@@ -1979,6 +2098,22 @@ function cacheLesson(l){
   if(l.group_id) lessonsCache[lessonKey('group', l.group_id, l.date)] = l;
   else lessonsCache[lessonKey('student', l.student_id, l.date)] = l;
 }
+function getExtraLesson(kind, id, dateISO){ return extraLessonsCache[lessonKey(kind,id,dateISO)]; }
+function hasExtraLesson(kind, id, dateISO){ return !!extraLessonsCache[lessonKey(kind,id,dateISO)]; }
+function cacheExtraLesson(x){
+  if(x.group_id) extraLessonsCache[lessonKey('group', x.group_id, x.date)] = x;
+  else extraLessonsCache[lessonKey('student', x.student_id, x.date)] = x;
+}
+// есть ли занятие на эту дату — по обычному расписанию или как дополнительное
+function isScheduledOn(kind, entity, dateISO, dt){
+  const regular = (entity.schedule||[]).some(sc=>sc.day===dt.isoWeekday());
+  return regular || hasExtraLesson(kind, entity.id, dateISO);
+}
+// ставка преподавателя за конкретный день: своя у доп. занятия, иначе обычная ставка сущности
+function rateForDate(kind, entity, dateISO){
+  const extra = getExtraLesson(kind, entity.id, dateISO);
+  return extra ? (extra.rate||0) : (entity.teacher_rate||0);
+}
 
 async function fetchLessonsForTeacherRange(teacherId, fromISO, toISO){
   const { data, error } = await sb.from('lessons').select('*').eq('teacher_id', teacherId).gte('date', fromISO).lte('date', toISO);
@@ -1990,6 +2125,16 @@ async function fetchLessonsForAllRange(fromISO, toISO){
   if(error){ toast('Ошибка загрузки занятий: '+error.message); return; }
   (data||[]).forEach(cacheLesson);
 }
+async function fetchExtraLessonsForTeacherRange(teacherId, fromISO, toISO){
+  const { data, error } = await sb.from('extra_lessons').select('*').eq('teacher_id', teacherId).gte('date', fromISO).lte('date', toISO);
+  if(error){ if(error.code!=='42P01') toast('Ошибка загрузки доп. занятий: '+error.message); return; }
+  (data||[]).forEach(cacheExtraLesson);
+}
+async function fetchExtraLessonsForAllRange(fromISO, toISO){
+  const { data, error } = await sb.from('extra_lessons').select('*').gte('date', fromISO).lte('date', toISO);
+  if(error){ if(error.code!=='42P01') toast('Ошибка загрузки доп. занятий: '+error.message); return; }
+  (data||[]).forEach(cacheExtraLesson);
+}
 
 function lessonsOnDate(teacherId, dateObj){
   const iso = dateObj.isoWeekday();
@@ -1997,10 +2142,16 @@ function lessonsOnDate(teacherId, dateObj){
   const out = [];
   studentsOfTeacher(teacherId).filter(s=>!s.group_id).forEach(s=>{
     if(isOnVacation(s.id, dateISO)) return;
-    (s.schedule||[]).forEach(sc=>{ if(sc.day===iso) out.push({kind:'student', id:s.id, label:s.last_name+' '+s.first_name[0]+'.', time:sc.time}); });
+    const extra = getExtraLesson('student', s.id, dateISO);
+    let matched = false;
+    (s.schedule||[]).forEach(sc=>{ if(sc.day===iso){ matched=true; out.push({kind:'student', id:s.id, label:s.last_name+' '+s.first_name[0]+'.', time:sc.time}); } });
+    if(!matched && extra) out.push({kind:'student', id:s.id, label:s.last_name+' '+s.first_name[0]+'. (доп.)', time:'—'});
   });
   groupsOfTeacher(teacherId).forEach(g=>{
-    (g.schedule||[]).forEach(sc=>{ if(sc.day===iso) out.push({kind:'group', id:g.id, label:'👥 '+g.name+' ('+membersOfGroup(g.id).length+')', time:sc.time}); });
+    const extra = getExtraLesson('group', g.id, dateISO);
+    let matched = false;
+    (g.schedule||[]).forEach(sc=>{ if(sc.day===iso){ matched=true; out.push({kind:'group', id:g.id, label:'👥 '+g.name+' ('+membersOfGroup(g.id).length+')', time:sc.time}); } });
+    if(!matched && extra) out.push({kind:'group', id:g.id, label:'👥 '+g.name+' (доп.)', time:'—'});
   });
   out.sort((a,b)=> a.time.localeCompare(b.time));
   return out;
@@ -2042,6 +2193,7 @@ async function renderWeekGrid(){
     `${currentWeekStart.format('D MMM')} – ${currentWeekStart.add(6,'day').format('D MMM YYYY')}`;
 
   await fetchLessonsForTeacherRange(teacherId, currentWeekStart.format('YYYY-MM-DD'), currentWeekStart.add(6,'day').format('YYYY-MM-DD'));
+  await fetchExtraLessonsForTeacherRange(teacherId, currentWeekStart.format('YYYY-MM-DD'), currentWeekStart.add(6,'day').format('YYYY-MM-DD'));
 
   let html = '';
   for(let i=0;i<7;i++){
@@ -2069,17 +2221,26 @@ function openStatusModal(kind, id, dateISO){
   const l = getLesson(kind, id, dateISO) || {status:null, initiator:'', reason:'', moved_to_date:''};
   const currentStatus = getStatus(kind, id, dateISO);
   const isPastAuto = !l.status && dateISO < todayISO();
-  const rate = isGroup ? (entity.teacher_rate||0) : (entity.teacher_rate||0);
+  const extra = getExtraLesson(kind, id, dateISO);
+  const rate = rateForDate(kind, entity, dateISO);
   const members = isGroup ? membersOfGroup(id) : [];
   openOverlay(`<div class="modal narrow">
     <div class="modal-head"><h2>${isGroup ? '👥 '+escapeHtml(entity.name) : escapeHtml(entity.last_name)+' '+escapeHtml(entity.first_name)}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
     <p style="color:var(--ink-light);margin-top:-8px;">${dayjs(dateISO).format('dddd, D MMMM YYYY')}</p>
     ${isGroup ? `<p style="font-size:12.5px;color:var(--ink-light);">Ученики: ${members.map(m=>escapeHtml(m.last_name)).join(', ')||'—'}</p>` : ''}
     ${isPastAuto ? `<p style="font-size:12px;color:var(--ink-light);">Дата уже прошла — занятие автоматически считается состоявшимся, если статус не менялся вручную.</p>` : ''}
+    ${extra ? `<p style="font-size:12px;color:#9c7a0a;background:var(--butter-soft);padding:6px 10px;border-radius:8px;">📌 Это дополнительное занятие (вне обычного расписания)</p>` : ''}
+    ${extra ? `
+    <div class="form-grid" style="margin-bottom:10px;">
+      <div class="field"><label>Продолжительность (мин)</label><select id="exlDurationEdit">${[30,45,60,90].map(m=>`<option value="${m}" ${extra.duration==m?'selected':''}>${m} минут</option>`).join('')}</select></div>
+      <div class="field"><label>Стоимость для преподавателя (₽)</label><input type="number" id="exlRateEdit" value="${extra.rate||0}"></div>
+    </div>
+    <button class="btn sm ghost" type="button" onclick="saveExtraLessonEdit('${kind}','${id}','${dateISO}')">Сохранить параметры занятия</button>
+    ` : `
     <div class="stat-card" style="margin-bottom:14px;">
       <div class="label">${isGroup?'Стоимость занятия для преподавателя (за всю группу)':'Стоимость занятия для преподавателя'}</div>
       <div class="value">${fmtMoney(rate)}</div>
-    </div>
+    </div>`}
     <div class="status-picker" id="statusPicker">
       ${['planned','done','moved','cancelled'].map(st=>`<button type="button" class="st-${st} ${currentStatus===st?'active':''}" data-st="${st}" onclick="pickStatus('${st}')">${STATUS_LABEL[st]}</button>`).join('')}
     </div>
@@ -2106,11 +2267,26 @@ function openStatusModal(kind, id, dateISO){
         <input type="date" id="movedToDate" value="${l.moved_to_date||''}">
       </div>
     </div>
-    <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end;">
-      <button class="btn ghost" onclick="closeOverlay()">Отмена</button>
-      <button class="btn primary" onclick="saveStatus('${kind}','${id}','${dateISO}')">Сохранить</button>
+    <div style="display:flex;gap:8px;margin-top:16px;justify-content:space-between;">
+      <div>${extra?`<button class="btn danger" onclick="deleteExtraLesson('${kind}','${id}','${dateISO}')">Удалить доп. занятие</button>`:''}</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn ghost" onclick="closeOverlay()">Отмена</button>
+        <button class="btn primary" onclick="saveStatus('${kind}','${id}','${dateISO}')">Сохранить</button>
+      </div>
     </div>
   </div>`);
+}
+async function saveExtraLessonEdit(kind, id, dateISO){
+  const extra = getExtraLesson(kind, id, dateISO);
+  if(!extra) return;
+  const duration = parseInt(document.getElementById('exlDurationEdit').value,10)||60;
+  const rate = parseFloat(document.getElementById('exlRateEdit').value)||0;
+  const { error } = await sb.from('extra_lessons').update({duration, rate}).eq('id', extra.id);
+  if(error){ toast('Ошибка: '+error.message); return; }
+  extra.duration = duration; extra.rate = rate;
+  toast('Параметры сохранены');
+  await renderMonthSummary();
+  if(document.getElementById('tab-admin').classList.contains('active')) renderAdminTab();
 }
 function pickStatus(st){
   document.querySelectorAll('#statusPicker button').forEach(b=>b.classList.toggle('active', b.dataset.st===st));
@@ -2149,8 +2325,77 @@ async function saveStatus(kind, id, dateISO){
     const payload = { student_id: isGroup?null:id, group_id: isGroup?id:null, teacher_id: entity.teacher_id, date:dateISO, status:st, initiator, reason, moved_to_date:movedToDate };
     if(existingId){ ({ error } = await sb.from('lessons').update(payload).eq('id', existingId)); }
     else { ({ error } = await sb.from('lessons').insert(payload)); }
+    // при переносе — создаём слот дополнительного занятия на новую дату, чтобы там тоже появилось занятие
+    if(!error && st==='moved' && movedToDate){
+      await ensureExtraLessonSlot(kind, id, movedToDate, entity);
+    }
   }
   if(error){ toast('Ошибка сохранения: '+error.message); return; }
+  closeOverlay();
+  await renderWeekGrid();
+  await renderMonthSummary();
+  if(document.getElementById('tab-admin').classList.contains('active')) renderAdminTab();
+}
+
+/* ---------- Дополнительные занятия (вне обычного расписания) ---------- */
+async function ensureExtraLessonSlot(kind, id, dateISO, entity){
+  const isGroup = kind==='group';
+  if(hasExtraLesson(kind, id, dateISO)) return; // уже есть слот на эту дату
+  const payload = {
+    student_id: isGroup?null:id, group_id: isGroup?id:null, teacher_id: entity.teacher_id,
+    date: dateISO, duration: entity.duration||60, rate: entity.teacher_rate||0,
+  };
+  const { data, error } = await sb.from('extra_lessons').insert(payload).select().single();
+  if(error){
+    if(error.code==='42P01' || /does not exist/i.test(error.message)){ toast('Таблица «extra_lessons» ещё не создана в Supabase — выполните SQL-миграцию'); }
+    return;
+  }
+  cacheExtraLesson(data);
+}
+function openExtraLessonModal(kind, id, dateISO){
+  const isGroup = kind==='group';
+  const entity = isGroup ? getGroup(id) : getStudent(id);
+  if(!entity){ toast('Не найдено'); return; }
+  openOverlay(`<div class="modal narrow">
+    <div class="modal-head"><h2>Доп. занятие — ${isGroup?'👥 '+escapeHtml(entity.name):escapeHtml(entity.last_name)+' '+escapeHtml(entity.first_name)}</h2><button class="modal-close" onclick="closeOverlay()">✕</button></div>
+    <p style="color:var(--ink-light);margin-top:-8px;">${dayjs(dateISO).format('dddd, D MMMM YYYY')}</p>
+    <p style="font-size:12px;color:var(--ink-light);">Этот день не входит в обычное расписание — здесь можно поставить разовое дополнительное занятие.</p>
+    <div class="field"><label>Продолжительность (минут)</label>
+      <select id="exlDuration">${[30,45,60,90].map(m=>`<option value="${m}" ${(entity.duration||60)==m?'selected':''}>${m} минут</option>`).join('')}</select>
+    </div>
+    <div class="field"><label>Стоимость занятия для преподавателя (₽)</label><input type="number" id="exlRate" value="${entity.teacher_rate||0}"></div>
+    <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;">
+      <button class="btn ghost" onclick="closeOverlay()">Отмена</button>
+      <button class="btn primary" onclick="saveExtraLesson('${kind}','${id}','${dateISO}')">Добавить занятие</button>
+    </div>
+  </div>`);
+}
+async function saveExtraLesson(kind, id, dateISO){
+  const isGroup = kind==='group';
+  const entity = isGroup ? getGroup(id) : getStudent(id);
+  const duration = parseInt(document.getElementById('exlDuration').value,10)||60;
+  const rate = parseFloat(document.getElementById('exlRate').value)||0;
+  const payload = { student_id: isGroup?null:id, group_id: isGroup?id:null, teacher_id: entity.teacher_id, date: dateISO, duration, rate };
+  const { data, error } = await sb.from('extra_lessons').insert(payload).select().single();
+  if(error){
+    if(error.code==='42P01' || /does not exist/i.test(error.message)){ toast('Таблица «extra_lessons» ещё не создана в Supabase — выполните SQL-миграцию'); }
+    else toast('Ошибка: '+error.message);
+    return;
+  }
+  cacheExtraLesson(data);
+  toast('Занятие добавлено');
+  closeOverlay();
+  await renderWeekGrid();
+  await renderMonthSummary();
+  if(document.getElementById('tab-admin').classList.contains('active')) renderAdminTab();
+}
+async function deleteExtraLesson(kind, id, dateISO){
+  if(!confirm('Удалить это дополнительное занятие? Статус занятия на эту дату тоже будет сброшен.')) return;
+  const ex = getExtraLesson(kind, id, dateISO);
+  if(ex){ await sb.from('extra_lessons').delete().eq('id', ex.id); delete extraLessonsCache[lessonKey(kind,id,dateISO)]; }
+  const l = getLesson(kind, id, dateISO);
+  if(l){ const isGroup=kind==='group'; await sb.from('lessons').delete().eq('id', l.id); delete lessonsCache[lessonKey(kind,id,dateISO)]; }
+  toast('Дополнительное занятие удалено');
   closeOverlay();
   await renderWeekGrid();
   await renderMonthSummary();
@@ -2171,6 +2416,7 @@ async function renderMonthSummary(){
   const from = currentMonth.startOf('month').format('YYYY-MM-DD');
   const to = currentMonth.endOf('month').format('YYYY-MM-DD');
   await fetchLessonsForTeacherRange(teacherId, from, to);
+  await fetchExtraLessonsForTeacherRange(teacherId, from, to);
   await fetchPaymentsForRange(from, to);
 
   const students = studentsOfTeacher(teacherId).filter(s=>!s.group_id);
@@ -2189,8 +2435,8 @@ async function renderMonthSummary(){
   let body = '';
   let grandCount=0, grandSum=0, grandMovedS=0, grandMovedT=0, grandCancS=0, grandCancT=0;
   const rowsData = [
-    ...students.map(s=>({kind:'student', id:s.id, name:s.last_name+' '+s.first_name, schedule:s.schedule, rate:s.teacher_rate, entity:s})),
-    ...groups.map(g=>({kind:'group', id:g.id, name:'👥 '+g.name, schedule:g.schedule, rate:g.teacher_rate, entity:g})),
+    ...students.map(s=>({kind:'student', id:s.id, name:s.last_name+' '+s.first_name, schedule:s.schedule, entity:s})),
+    ...groups.map(g=>({kind:'group', id:g.id, name:'👥 '+g.name, schedule:g.schedule, entity:g})),
   ];
   rowsData.forEach(r=>{
     let row = `<div class="namecell"><span class="namecell-link" onclick="${r.kind==='group'?`openGroupModal('${r.id}')`:`openStudentModal('${r.id}')`}">${escapeHtml(r.name)}</span></div>`;
@@ -2198,14 +2444,16 @@ async function renderMonthSummary(){
     for(let d=1; d<=daysInMonth; d++){
       const dt = currentMonth.date(d);
       const iso = dt.format('YYYY-MM-DD');
-      const scheduled = (r.schedule||[]).some(sc=>sc.day===dt.isoWeekday());
+      const scheduled = isScheduledOn(r.kind, r.entity, iso, dt);
       const weekend = dt.isoWeekday()>=6;
       const cellCls = ['cell']; if(weekend) cellCls.push('weekend'); if(iso===today) cellCls.push('today');
-      if(!scheduled){ row += `<div class="${cellCls.join(' ')}"><div class="daychip empty"></div></div>`; continue; }
+      if(!scheduled){ row += `<div class="${cellCls.join(' ')}"><div class="daychip empty" style="cursor:pointer;" onclick="openExtraLessonModal('${r.kind}','${r.id}','${iso}')" title="Добавить занятие на этот день"></div></div>`; continue; }
       if(r.kind==='student' && isOnVacation(r.id, iso)){ row += `<div class="${cellCls.join(' ')}"><div class="daychip vacation" title="Каникулы">🏖</div></div>`; continue; }
+      if(r.kind==='group' && isGroupOnVacation(r.id, iso)){ row += `<div class="${cellCls.join(' ')}"><div class="daychip vacation" title="Каникулы группы">🏖</div></div>`; continue; }
       const st = getStatus(r.kind, r.id, iso);
-      if(st==='done'){ count++; sum += (r.rate||0); }
-      row += `<div class="${cellCls.join(' ')}"><div class="daychip st-${st}" onclick="openStatusModal('${r.kind}','${r.id}','${iso}')" title="${STATUS_LABEL[st]}">${st==='planned'?'·':st[0].toUpperCase()}</div></div>`;
+      const isExtra = hasExtraLesson(r.kind, r.id, iso);
+      if(st==='done'){ count++; sum += rateForDate(r.kind, r.entity, iso); }
+      row += `<div class="${cellCls.join(' ')}"><div class="daychip st-${st}${isExtra?' extra':''}" onclick="openStatusModal('${r.kind}','${r.id}','${iso}')" title="${STATUS_LABEL[st]}${isExtra?' (доп. занятие)':''}">${st==='planned'?'·':st[0].toUpperCase()}</div></div>`;
     }
     const stats = r.kind==='student' ? studentMonthStats(r.entity, currentMonth) : groupMonthStats(r.entity, currentMonth);
     row += `<div class="cell" style="font-weight:700;">${count}</div>
@@ -2243,26 +2491,25 @@ function paymentsInMonthCached(studentId, monthObj){
 }
 function studentMonthStats(student, monthObj){
   const daysInMonth = monthObj.daysInMonth();
-  let done=0, movedS=0, movedT=0, cancS=0, cancT=0, scheduled=0;
+  let done=0, movedS=0, movedT=0, cancS=0, cancT=0, scheduled=0, salary=0;
   for(let d=1; d<=daysInMonth; d++){
     const dt = monthObj.date(d);
-    const isScheduled = (student.schedule||[]).some(sc=>sc.day===dt.isoWeekday());
-    if(!isScheduled) continue;
     const iso = dt.format('YYYY-MM-DD');
+    const isScheduled = isScheduledOn('student', student, iso, dt);
+    if(!isScheduled) continue;
     if(isOnVacation(student.id, iso)) continue; // каникулы — занятие не считается ни запланированным, ни состоявшимся
     scheduled++;
     const st = getStatus('student', student.id, iso);
-    if(st==='done') done++;
+    if(st==='done'){ done++; salary += rateForDate('student', student, iso); }
     else if(st==='moved'){ const l=getLesson('student',student.id,iso); if(l?.initiator==='teacher') movedT++; else movedS++; }
     else if(st==='cancelled'){ const l=getLesson('student',student.id,iso); if(l?.initiator==='teacher') cancT++; else cancS++; }
   }
   const pays = paymentsInMonthCached(student.id, monthObj);
   const paidCount = pays.reduce((a,p)=>a+p.count,0);
   const paidAmount = pays.reduce((a,p)=>a + (p.amount!==undefined&&p.amount!==null?p.amount:p.count*(student.price||0)), 0);
-  const price = student.price||0, rate = student.teacher_rate||0;
+  const price = student.price||0;
   const revenuePlan = price * scheduled;     // сумма оплаты (план)
   const revenueFact = price * done;          // сумма оплаты (факт)
-  const salary = done * rate;                // зарплата преподавателя
   const profitBeforeTax = revenueFact - salary; // прибыль без налога
   const tax = revenueFact * 0.04;               // налог
   const profitAfterTax = profitBeforeTax - tax; // прибыль с налогом
@@ -2270,30 +2517,33 @@ function studentMonthStats(student, monthObj){
 }
 function groupMonthStats(group, monthObj){
   const daysInMonth = monthObj.daysInMonth();
-  let done=0, movedS=0, movedT=0, cancS=0, cancT=0, scheduled=0;
+  let done=0, movedS=0, movedT=0, cancS=0, cancT=0, scheduled=0, salary=0, revenuePlan=0, revenueFact=0;
+  const members = membersOfGroup(group.id);
   for(let d=1; d<=daysInMonth; d++){
     const dt = monthObj.date(d);
-    const isScheduled = (group.schedule||[]).some(sc=>sc.day===dt.isoWeekday());
-    if(!isScheduled) continue;
-    scheduled++;
     const iso = dt.format('YYYY-MM-DD');
+    const isScheduled = isScheduledOn('group', group, iso, dt);
+    if(!isScheduled) continue;
+    if(isGroupOnVacation(group.id, iso)) continue; // вся группа на каникулах — день не считается вовсе
+    scheduled++;
+    // сумма цен участников, которые платят за этот день (кто-то мог отметить личные неоплачиваемые каникулы)
+    const payingPriceSum = members.reduce((sum,m)=>{
+      const ve = vacationEntryFor(m.id, iso);
+      if(ve && ve.paid===false) return sum;
+      return sum + (m.price||0);
+    }, 0);
+    revenuePlan += payingPriceSum;
     const st = getStatus('group', group.id, iso);
-    if(st==='done') done++;
+    if(st==='done'){ done++; salary += rateForDate('group', group, iso); revenueFact += payingPriceSum; }
     else if(st==='moved'){ const l=getLesson('group',group.id,iso); if(l?.initiator==='teacher') movedT++; else movedS++; }
     else if(st==='cancelled'){ const l=getLesson('group',group.id,iso); if(l?.initiator==='teacher') cancT++; else cancS++; }
   }
-  const members = membersOfGroup(group.id);
-  let paidAmount = 0, paidCount = 0, priceSum = 0;
+  let paidAmount = 0, paidCount = 0;
   members.forEach(m=>{
     const pays = paymentsInMonthCached(m.id, monthObj);
     paidCount += pays.reduce((a,p)=>a+p.count,0);
     paidAmount += pays.reduce((a,p)=>a + (p.amount!==undefined&&p.amount!==null?p.amount:p.count*(m.price||0)), 0);
-    priceSum += (m.price||0);
   });
-  const rate = group.teacher_rate||0;
-  const revenuePlan = priceSum * scheduled;
-  const revenueFact = priceSum * done;
-  const salary = done * rate;
   const profitBeforeTax = revenueFact - salary;
   const tax = revenueFact * 0.04;
   const profitAfterTax = profitBeforeTax - tax;
@@ -2319,6 +2569,7 @@ async function renderAdminTab(){
   const from = currentMonth.startOf('month').format('YYYY-MM-DD');
   const to = currentMonth.endOf('month').format('YYYY-MM-DD');
   await fetchLessonsForAllRange(from, to);
+  await fetchExtraLessonsForAllRange(from, to);
   await fetchPaymentsForRange(from, to);
   await fetchExpensesIncomes();
 
@@ -2358,13 +2609,14 @@ function renderAdminSummaryTable(){
       for(let d=1; d<=daysInMonth; d++){
         const dt = currentMonth.date(d);
         const iso = dt.format('YYYY-MM-DD');
-        const scheduled = (s.schedule||[]).some(sc=>sc.day===dt.isoWeekday());
+        const scheduled = isScheduledOn('student', s, iso, dt);
         const weekend = dt.isoWeekday()>=6;
         const cellCls = ['cell']; if(weekend) cellCls.push('weekend'); if(iso===today) cellCls.push('today');
-        if(!scheduled){ row += `<div class="${cellCls.join(' ')}"><div class="daychip empty"></div></div>`; continue; }
+        if(!scheduled){ row += `<div class="${cellCls.join(' ')}"><div class="daychip empty" style="cursor:pointer;" onclick="openExtraLessonModal('student','${s.id}','${iso}')" title="Добавить занятие на этот день"></div></div>`; continue; }
         if(isOnVacation(s.id, iso)){ row += `<div class="${cellCls.join(' ')}"><div class="daychip vacation" title="Каникулы">🏖</div></div>`; continue; }
         const st = getStatus('student', s.id, iso);
-        row += `<div class="${cellCls.join(' ')}"><div class="daychip st-${st}" onclick="openStatusModal('student','${s.id}','${iso}')" title="${STATUS_LABEL[st]}">${st==='planned'?'·':st[0].toUpperCase()}</div></div>`;
+        const isExtra = hasExtraLesson('student', s.id, iso);
+        row += `<div class="${cellCls.join(' ')}"><div class="daychip st-${st}${isExtra?' extra':''}" onclick="openStatusModal('student','${s.id}','${iso}')" title="${STATUS_LABEL[st]}${isExtra?' (доп. занятие)':''}">${st==='planned'?'·':st[0].toUpperCase()}</div></div>`;
       }
       row += `<div class="cell" style="font-weight:700;">${stats.done}</div>
         <div class="cell" style="font-weight:700;cursor:pointer;text-decoration:underline dotted;" onclick="showPaymentsPopup('${s.id}')">${stats.paidCount}</div>
@@ -2388,12 +2640,14 @@ function renderAdminSummaryTable(){
       for(let d=1; d<=daysInMonth; d++){
         const dt = currentMonth.date(d);
         const iso = dt.format('YYYY-MM-DD');
-        const scheduled = (g.schedule||[]).some(sc=>sc.day===dt.isoWeekday());
+        const scheduled = isScheduledOn('group', g, iso, dt);
         const weekend = dt.isoWeekday()>=6;
         const cellCls = ['cell']; if(weekend) cellCls.push('weekend'); if(iso===today) cellCls.push('today');
-        if(!scheduled){ row += `<div class="${cellCls.join(' ')}"><div class="daychip empty"></div></div>`; continue; }
+        if(!scheduled){ row += `<div class="${cellCls.join(' ')}"><div class="daychip empty" style="cursor:pointer;" onclick="openExtraLessonModal('group','${g.id}','${iso}')" title="Добавить занятие на этот день"></div></div>`; continue; }
+        if(isGroupOnVacation(g.id, iso)){ row += `<div class="${cellCls.join(' ')}"><div class="daychip vacation" title="Каникулы группы">🏖</div></div>`; continue; }
         const st = getStatus('group', g.id, iso);
-        row += `<div class="${cellCls.join(' ')}"><div class="daychip st-${st}" onclick="openStatusModal('group','${g.id}','${iso}')" title="${STATUS_LABEL[st]}">${st==='planned'?'·':st[0].toUpperCase()}</div></div>`;
+        const isExtra = hasExtraLesson('group', g.id, iso);
+        row += `<div class="${cellCls.join(' ')}"><div class="daychip st-${st}${isExtra?' extra':''}" onclick="openStatusModal('group','${g.id}','${iso}')" title="${STATUS_LABEL[st]}${isExtra?' (доп. занятие)':''}">${st==='planned'?'·':st[0].toUpperCase()}</div></div>`;
       }
       row += `<div class="cell" style="font-weight:700;">${gStats.done}</div>
         <div class="cell" style="font-weight:700;">${gStats.paidCount}</div>
