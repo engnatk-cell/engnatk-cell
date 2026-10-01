@@ -1998,7 +1998,7 @@ async function openParentReportModal(studentId, from, to){
     <p class="report-edit-hint" id="reportEditHint" style="display:none;">Текст целей и комментариев в отчёте можно кликнуть и отредактировать перед скачиванием.</p>
     <div style="display:flex;justify-content:center;gap:8px;margin-top:16px;">
       <button class="btn primary" onclick="exportNodeAsPNG('parentReportSquare','otchet-${escapeHtml(s.last_name)}')">⭳ Скачать PNG</button>
-      <button class="btn primary" onclick="exportNodeAsPDF('parentReportSquare','otchet-${escapeHtml(s.last_name)}')">⭳ Скачать PDF</button>
+      <button class="btn primary" onclick="exportParentReportAsPDF('parentReportSquare','otchet-${escapeHtml(s.last_name)}')">⭳ Скачать PDF</button>
     </div>
   </div>`);
 }
@@ -3006,6 +3006,31 @@ function exportNodeAsPDF(nodeId, filename){
       image:{type:'jpeg', quality:0.98},
       html2canvas:{scale:2, useCORS:true, backgroundColor:'#ffffff'},
       jsPDF:jsPDFOpts,
+      pagebreak:{mode:['css','legacy']}
+    }).from(clone).save().then(()=>{ wrapper.remove(); }).catch((err)=>{ wrapper.remove(); console.error('PDF export error:', err); toast('Ошибка формирования PDF: '+err.message); });
+  }, 50);
+}
+/* Отчёт для родителя: PDF всегда формируется на весь лист А4 (книжная ориентация),
+   текст крупным единым шрифтом 24px для удобного чтения с телефона/при печати */
+function exportParentReportAsPDF(nodeId, filename){
+  const node = document.getElementById(nodeId);
+  if(!node){ toast('Нечего экспортировать'); return; }
+  toast('Формируем PDF…');
+  const { wrapper, clone } = prepareExportClone(node);
+  clone.classList.add('report-pdf-a4');
+  const style = document.createElement('style');
+  style.textContent = `
+    .report-pdf-a4{width:194mm!important;max-width:194mm!important;box-sizing:border-box;}
+    .report-pdf-a4, .report-pdf-a4 *{font-size:24px!important;line-height:1.45!important;}
+  `;
+  wrapper.appendChild(style);
+  setTimeout(()=>{
+    html2pdf().set({
+      margin:8,
+      filename:filename+'-'+dayjs().format('YYYY-MM-DD')+'.pdf',
+      image:{type:'jpeg', quality:0.98},
+      html2canvas:{scale:2, useCORS:true, backgroundColor:'#ffffff'},
+      jsPDF:{unit:'mm', format:'a4', orientation:'portrait'},
       pagebreak:{mode:['css','legacy']}
     }).from(clone).save().then(()=>{ wrapper.remove(); }).catch((err)=>{ wrapper.remove(); console.error('PDF export error:', err); toast('Ошибка формирования PDF: '+err.message); });
   }, 50);
