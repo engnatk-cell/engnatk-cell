@@ -2041,8 +2041,20 @@ async function regenerateParentReport(studentId){
       const l = byDate[iso];
       const st = l ? l.status : (iso<today ? 'done' : 'planned');
       if(st==='done') done++;
-      else if(st==='moved') moved++;
       else if(st==='cancelled') cancelled++;
+      else if(st==='moved'){
+        // если занятие перенесено на другую дату того же периода и перенесённое занятие
+        // уже состоялось — засчитываем его как состоявшееся, это не должно портить % посещаемости
+        const movedTo = l && l.moved_to_date;
+        let countedAsDone = false;
+        if(movedTo && !dayjs(movedTo).isBefore(dayjs(from)) && !dayjs(movedTo).isAfter(dayjs(to))){
+          const targetLesson = byDate[movedTo];
+          const targetStatus = targetLesson ? targetLesson.status : (movedTo<today ? 'done' : 'planned');
+          if(targetStatus==='done') countedAsDone = true;
+        }
+        if(countedAsDone) done++;
+        else moved++;
+      }
     }
     cur = cur.add(1,'day');
   }
