@@ -1977,6 +1977,7 @@ async function openParentReportModal(studentId, from, to){
       <div class="field" style="margin:0;"><label>С</label><input type="date" id="prFrom" value="${from}"></div>
       <div class="field" style="margin:0;"><label>По</label><input type="date" id="prTo" value="${to}"></div>
       <button class="btn sm ghost" onclick="quickRange('${studentId}','month')">Текущий месяц</button>
+      <button class="btn sm ghost" onclick="quickRange('${studentId}','prevmonth')">Предыдущий месяц</button>
     </div>
     ${examsCheckboxHtml}
     <button class="btn sm accent" style="margin-top:10px;" onclick="regenerateParentReport('${studentId}')">Сформировать отчёт</button>
@@ -1997,6 +1998,10 @@ function quickRange(studentId, kind){
   if(kind==='month'){
     document.getElementById('prFrom').value = dayjs().startOf('month').format('YYYY-MM-DD');
     document.getElementById('prTo').value = dayjs().endOf('month').format('YYYY-MM-DD');
+  } else if(kind==='prevmonth'){
+    const prev = dayjs().subtract(1,'month');
+    document.getElementById('prFrom').value = prev.startOf('month').format('YYYY-MM-DD');
+    document.getElementById('prTo').value = prev.endOf('month').format('YYYY-MM-DD');
   }
 }
 async function regenerateParentReport(studentId){
@@ -2037,7 +2042,15 @@ async function regenerateParentReport(studentId){
 
   // комментарии преподавателя за этот период (для группы — из собственных записей ученика)
   const { data: ownReports } = await sb.from('reports').select('*').eq('student_id', studentId).gte('month', dayjs(from).format('YYYY-MM')).lte('month', dayjs(to).format('YYYY-MM'));
-  const personalComment = (ownReports||[]).map(r=>r.comments||r.content).filter(Boolean).join(' ');
+  const personalComment = (ownReports||[])
+    .sort((a,b)=> (a.month||'').localeCompare(b.month||''))
+    .map(r=>{
+      const parts = [];
+      if(r.content) parts.push(`Чему научился ученик: ${r.content}`);
+      if(r.comments) parts.push(`Комментарии: ${r.comments}`);
+      return parts.join(' ');
+    })
+    .filter(Boolean).join(' | ');
   const goalsText = grouped ? (g?.goals || s.goals || 'Цели пока не заданы.') : (s.goals || 'Цели пока не заданы.');
 
   // выбранные для отчёта пробники
