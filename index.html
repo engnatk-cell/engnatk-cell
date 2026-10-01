@@ -2036,7 +2036,8 @@ async function regenerateParentReport(studentId){
   const end = dayjs(to);
   while(!cur.isAfter(end)){
     const iso = cur.format('YYYY-MM-DD');
-    if((scheduleEntity.schedule||[]).some(sc=>sc.day===cur.isoWeekday()) && !(!grouped && isOnVacation(studentId, iso))){
+    const onVacation = isOnVacation(studentId, iso) || (grouped && isGroupOnVacation(s.group_id, iso));
+    if((scheduleEntity.schedule||[]).some(sc=>sc.day===cur.isoWeekday()) && !onVacation){
       scheduled++;
       const l = byDate[iso];
       const st = l ? l.status : (iso<today ? 'done' : 'planned');
