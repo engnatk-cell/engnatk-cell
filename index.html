@@ -267,6 +267,14 @@ input,select,textarea{font-family:var(--font-body);font-size:14px;}
 .report-goals{background:#fff;border-radius:16px;padding:14px;font-size:12.5px;}
 .report-goals[contenteditable="true"]{outline:none;cursor:text;}
 .report-goals[contenteditable="true"]:focus{box-shadow:0 0 0 2px var(--pink);}
+.rmc-section-title{font-weight:700;font-size:13px;margin-top:14px;margin-bottom:6px;padding-top:10px;border-top:1px solid #eee;}
+.rmc-month{margin-bottom:10px;}
+.rmc-month+.rmc-month{margin-top:12px;padding-top:10px;border-top:1px dashed #e5e5e5;}
+.rmc-month-title{font-weight:700;font-size:12px;color:var(--ink-light);margin-bottom:6px;text-transform:capitalize;}
+.rmc-block{margin-bottom:8px;}
+.rmc-block:last-child{margin-bottom:0;}
+.rmc-label{font-weight:700;font-size:12px;margin-bottom:2px;}
+.rmc-text{white-space:normal;line-height:1.45;}
 .report-chart-wrap{background:#fff;border-radius:16px;padding:10px;position:relative;height:150px;overflow:hidden;display:flex;align-items:center;justify-content:center;}
 .report-chart-wrap canvas{max-height:130px!important;}
 .report-chart-wrap.tall{height:230px;}
@@ -2042,15 +2050,19 @@ async function regenerateParentReport(studentId){
 
   // комментарии преподавателя за этот период (для группы — из собственных записей ученика)
   const { data: ownReports } = await sb.from('reports').select('*').eq('student_id', studentId).gte('month', dayjs(from).format('YYYY-MM')).lte('month', dayjs(to).format('YYYY-MM'));
-  const personalComment = (ownReports||[])
+  const textToHtml = (t) => escapeHtml(t||'').replace(/\n/g,'<br>');
+  const monthBlocksHtml = (ownReports||[])
     .sort((a,b)=> (a.month||'').localeCompare(b.month||''))
     .map(r=>{
       const parts = [];
-      if(r.content) parts.push(`Чему научился ученик: ${r.content}`);
-      if(r.comments) parts.push(`Комментарии: ${r.comments}`);
-      return parts.join(' ');
+      if(r.content) parts.push(`<div class="rmc-block"><div class="rmc-label">Чему научился ученик</div><div class="rmc-text">${textToHtml(r.content)}</div></div>`);
+      if(r.comments) parts.push(`<div class="rmc-block"><div class="rmc-label">Комментарии</div><div class="rmc-text">${textToHtml(r.comments)}</div></div>`);
+      if(!parts.length) return '';
+      const monthLabel = r.month ? dayjs(r.month+'-01').format('MMMM YYYY') : '';
+      return `<div class="rmc-month">${monthLabel?`<div class="rmc-month-title">${escapeHtml(monthLabel)}</div>`:''}${parts.join('')}</div>`;
     })
-    .filter(Boolean).join(' | ');
+    .filter(Boolean).join('');
+  const personalComment = monthBlocksHtml; // truthy check below relies on non-empty string
   const goalsText = grouped ? (g?.goals || s.goals || 'Цели пока не заданы.') : (s.goals || 'Цели пока не заданы.');
 
   // выбранные для отчёта пробники
@@ -2076,7 +2088,7 @@ async function regenerateParentReport(studentId){
       <div class="report-stat"><div class="l">Отменено</div><div class="v">${cancelled}</div></div>
     </div>
     <div class="report-chart-wrap"><canvas id="parentReportChart"></canvas></div>
-    <div class="report-goals" contenteditable="true"><strong>Цели на учебный год:</strong><br>${escapeHtml(goalsText)}${personalComment?`<br><br><strong>Комментарии преподавателя за период:</strong><br>${escapeHtml(personalComment)}`:''}</div>
+    <div class="report-goals" contenteditable="true"><div class="rmc-block"><div class="rmc-label">Цели на учебный год</div><div class="rmc-text">${textToHtml(goalsText)}</div></div>${personalComment?`<div class="rmc-section-title">Комментарии преподавателя за период</div>${personalComment}`:''}</div>
     ${examsHtml}
   `;
   document.getElementById('reportEditHint').style.display = 'block';
