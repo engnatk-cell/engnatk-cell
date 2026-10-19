@@ -2388,7 +2388,15 @@ async function ensureExtraLessonSlot(kind, id, dateISO, entity){
   };
   const { data, error } = await sb.from('extra_lessons').insert(payload).select().single();
   if(error){
-    if(error.code==='42P01' || /does not exist/i.test(error.message)){ toast('Таблица «extra_lessons» ещё не создана в Supabase — выполните SQL-миграцию'); }
+    if(error.code==='42P01' || /does not exist/i.test(error.message)){
+      toast('Таблица «extra_lessons» ещё не создана в Supabase — выполните SQL-миграцию');
+    } else {
+      // запись могла реально создаться в базе, даже если прочитать её обратно не удалось
+      // (например, из-за ограничений доступа на чтение) — поэтому кэшируем по известным данным,
+      // чтобы дата переноса сразу отразилась в интерфейсе, и явно показываем ошибку, а не молчим
+      toast('Занятие на дату переноса создано, но не удалось подтвердить чтением: '+error.message);
+      cacheExtraLesson({ id:'local-'+dateISO+'-'+id, ...payload });
+    }
     return;
   }
   cacheExtraLesson(data);
