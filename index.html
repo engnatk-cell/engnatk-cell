@@ -437,13 +437,13 @@ input,select,textarea{font-family:var(--font-body);font-size:14px;}
       <div class="panel"><div class="finance-grid" id="adminStatCards"></div></div>
 
       <div class="panel">
-        <div class="panel-head"><div><span class="eyebrow-label">Расходы и доходы</span><h2>Другие расходы</h2></div>
+        <div class="panel-head"><div><span class="eyebrow-label">Расходы и доходы · <span id="expensesMonthLabel"></span></span><h2>Другие расходы</h2></div>
           <button class="btn accent sm" onclick="openExpenseModal()">+ Добавить расход</button></div>
         <div class="simple-list" id="expensesList"></div>
       </div>
 
       <div class="panel">
-        <div class="panel-head"><div><h2>Другие доходы</h2></div>
+        <div class="panel-head"><div><span class="eyebrow-label" id="incomesMonthLabel"></span><h2>Другие доходы</h2></div>
           <button class="btn accent sm" onclick="openIncomeModal()">+ Добавить доход</button></div>
         <div class="simple-list" id="incomesList"></div>
       </div>
@@ -451,7 +451,8 @@ input,select,textarea{font-family:var(--font-body);font-size:14px;}
       <div class="panel">
         <div class="panel-head"><div><span class="eyebrow-label">Динамика</span><h2>Доходы и расходы по месяцам</h2></div>
           <button class="btn ghost sm" onclick="exportNodeAsPDF('chartReportBlock','otchet-dinamika')">⭳ Отчёт в PDF</button></div>
-        <div class="filters-row" id="teacherFilterChips"></div>
+        <div class="filters-row" id="chartLineToggles"></div>
+        <div id="chartDataForm" style="margin-bottom:12px;"></div>
         <div id="chartReportBlock"><canvas id="incomeExpenseChart" height="90"></canvas></div>
       </div>
     </section>
@@ -2520,14 +2521,26 @@ async function renderMonthSummary(){
    ================================================================== */
 let paymentsCache = {}; // studentId -> [payments] (для текущего загруженного диапазона)
 async function fetchPaymentsForRange(fromISO, toISO){
-  const { data, error } = await sb.from('payments').select('*').gte('date', fromISO).lte('date', toISO);
+  // оплата должна попадать в сводку за месяц, за который она сделана (период оплаты),
+  // а не за месяц, когда она фактически поступила — поэтому ищем совпадение и по периоду
+  // оплаты (period_from/period_to), и, если период не указан, по дате оплаты
+  const { data, error } = await sb.from('payments').select('*')
+    .or(`and(period_from.lte.${toISO},period_to.gte.${fromISO}),and(period_from.is.null,date.gte.${fromISO},date.lte.${toISO})`);
   if(error){ toast('Ошибка загрузки оплат: '+error.message); return; }
   paymentsCache = {};
   (data||[]).forEach(p=>{ (paymentsCache[p.student_id] = paymentsCache[p.student_id]||[]).push(p); });
 }
 function paymentsInMonthCached(studentId, monthObj){
   const from = monthObj.startOf('month'), to = monthObj.endOf('month');
-  return (paymentsCache[studentId]||[]).filter(p=>{ const d=dayjs(p.date); return !d.isBefore(from) && !d.isAfter(to); });
+  return (paymentsCache[studentId]||[]).filter(p=>{
+    if(p.period_from && p.period_to){
+      // учитываем оплату в том месяце, на который приходится оплаченный период (а не дата поступления оплаты)
+      const pf = dayjs(p.period_from), pt = dayjs(p.period_to);
+      return !pt.isBefore(from) && !pf.isAfter(to);
+    }
+    const d = dayjs(p.date);
+    return !d.isBefore(from) && !d.isAfter(to);
+  });
 }
 function studentMonthStats(student, monthObj){
   const daysInMonth = monthObj.daysInMonth();
@@ -2612,11 +2625,13 @@ async function renderAdminTab(){
   await fetchExtraLessonsForAllRange(from, to);
   await fetchPaymentsForRange(from, to);
   await fetchExpensesIncomes();
+  await fetchChartData();
 
   renderAdminSummaryTable();
   renderExpensesList();
   renderIncomesList();
-  renderTeacherFilterChips();
+  renderChartLineToggles();
+  renderChartDataForm();
   await renderChart();
 }
 
@@ -2800,15 +2815,33 @@ function monthlyEquivalent(item, monthObj){
   return 0;
 }
 function monthlyEquivalentTotal(list, monthObj){ return list.reduce((a,i)=>a+monthlyEquivalent(i,monthObj),0); }
+// применяется ли запись расхода/дохода к данному месяцу — чтобы список во вкладке
+// «Сводка по месяцам» переключался вместе с остальной вкладкой, а не показывал всё подряд
+function appliesToMonth(item, monthObj){
+  const monthKey = monthObj.format('YYYY-MM');
+  const itemStart = item.date ? dayjs(item.date).format('YYYY-MM') : null;
+  if(item.type==='one') return itemStart===monthKey;
+  if(item.type==='periodic'){
+    if(!itemStart) return false;
+    const diff = monthObj.startOf('month').diff(dayjs(item.date).startOf('month'), 'month');
+    return diff>=0 && diff % (item.interval_months||1) === 0;
+  }
+  // monthly (расход) и regular (доход) — действуют каждый месяц, начиная с указанной даты
+  if(!itemStart) return true;
+  return monthKey>=itemStart;
+}
 
 function renderExpensesList(){
   const el = document.getElementById('expensesList');
-  el.innerHTML = expensesCache.length ? expensesCache.map(e=>`<div class="simple-row">
+  const monthLabelEl = document.getElementById('expensesMonthLabel');
+  if(monthLabelEl) monthLabelEl.textContent = currentMonth.format('MMMM YYYY');
+  const items = expensesCache.filter(e=>appliesToMonth(e, currentMonth));
+  el.innerHTML = items.length ? items.map(e=>`<div class="simple-row">
     <span class="name">${escapeHtml(e.name)}</span>
     <span class="meta2">${e.type==='one'?'Разовый':e.type==='monthly'?'Ежемесячный':'Периодический (раз в '+e.interval_months+' мес.)'}</span>
     <span>${fmtMoney(e.amount)}</span><span class="meta2">≈ ${fmtMoney(monthlyEquivalent(e,currentMonth))}/мес</span>
     <span><button class="btn sm ghost" onclick="openExpenseModal('${e.id}')">✎</button> <button class="btn sm ghost" onclick="deleteExpense('${e.id}')">✕</button></span>
-  </div>`).join('') : '<div class="simple-row">Расходов пока нет</div>';
+  </div>`).join('') : `<div class="simple-row">За ${currentMonth.format('MMMM YYYY')} расходов нет</div>`;
 }
 function openExpenseModal(id){
   const e = id ? expensesCache.find(x=>x.id===id) : {name:'',type:'monthly',amount:0,interval_months:1,date:dayjs().format('YYYY-MM-DD')};
@@ -2852,12 +2885,15 @@ async function deleteExpense(id){
 
 function renderIncomesList(){
   const el = document.getElementById('incomesList');
-  el.innerHTML = incomesCache.length ? incomesCache.map(i=>`<div class="simple-row">
+  const monthLabelEl = document.getElementById('incomesMonthLabel');
+  if(monthLabelEl) monthLabelEl.textContent = currentMonth.format('MMMM YYYY');
+  const items = incomesCache.filter(i=>appliesToMonth(i, currentMonth));
+  el.innerHTML = items.length ? items.map(i=>`<div class="simple-row">
     <span class="name">${escapeHtml(i.name)}</span>
     <span class="meta2">${escapeHtml(i.source||'')} · ${i.type==='regular'?'Регулярный':'Разовый'}</span>
     <span>${fmtMoney(i.amount)}</span><span class="meta2">≈ ${fmtMoney(monthlyEquivalent(i,currentMonth))}/мес</span>
     <span><button class="btn sm ghost" onclick="openIncomeModal('${i.id}')">✎</button> <button class="btn sm ghost" onclick="deleteIncome('${i.id}')">✕</button></span>
-  </div>`).join('') : '<div class="simple-row">Доходов пока нет</div>';
+  </div>`).join('') : `<div class="simple-row">За ${currentMonth.format('MMMM YYYY')} доходов нет</div>`;
 }
 function openIncomeModal(id){
   const i = id ? incomesCache.find(x=>x.id===id) : {name:'',source:'',type:'one',amount:0,date:dayjs().format('YYYY-MM-DD')};
@@ -2897,63 +2933,92 @@ async function deleteIncome(id){
   await fetchExpensesIncomes(); renderIncomesList(); renderAdminSummaryTable(); await renderChart();
 }
 
-/* ---------- График доходов/расходов (12 месяцев) ---------- */
-let activeTeacherFilters = null;
+/* ---------- График доходов/расходов (12 месяцев) — данные вносятся вручную ---------- */
 let showIncomeLine = true, showExpenseLine = true;
 let chartInstance = null;
+let chartDataCache = []; // все вручную внесённые записи {id, month:'YYYY-MM', income, expense}
 
-function renderTeacherFilterChips(){
-  if(activeTeacherFilters===null) activeTeacherFilters = new Set(cache.teachers.map(t=>t.id));
-  const el = document.getElementById('teacherFilterChips');
+async function fetchChartData(){
+  const { data, error } = await sb.from('chart_data').select('*');
+  if(error){
+    if(error.code!=='42P01') toast('Ошибка загрузки данных графика: '+error.message);
+    chartDataCache = [];
+    return;
+  }
+  chartDataCache = data || [];
+}
+function chartDataForMonth(monthObj){
+  const key = monthObj.format('YYYY-MM');
+  return chartDataCache.find(r=>r.month===key);
+}
+
+function renderChartLineToggles(){
+  const el = document.getElementById('chartLineToggles');
   el.innerHTML = `
-    <button class="filter-chip ${activeTeacherFilters.size===cache.teachers.length?'active':''}" onclick="selectAllTeacherFilters()">Все преподаватели</button>
-    ${cache.teachers.map(t=>`<button class="filter-chip ${activeTeacherFilters.has(t.id)?'active':''}" onclick="toggleTeacherFilter('${t.id}')">${escapeHtml(t.last_name)}</button>`).join('')}
     <button class="filter-chip ${showIncomeLine?'active':''}" onclick="toggleLine('income')">Линия доходов</button>
     <button class="filter-chip ${showExpenseLine?'active':''}" onclick="toggleLine('expense')">Линия расходов</button>
   `;
 }
-function selectAllTeacherFilters(){ activeTeacherFilters = new Set(cache.teachers.map(t=>t.id)); renderTeacherFilterChips(); renderChart(); }
-function toggleTeacherFilter(id){
-  if(activeTeacherFilters.has(id)) activeTeacherFilters.delete(id); else activeTeacherFilters.add(id);
-  renderTeacherFilterChips(); renderChart();
-}
 function toggleLine(which){
   if(which==='income') showIncomeLine=!showIncomeLine; else showExpenseLine=!showExpenseLine;
-  renderTeacherFilterChips(); renderChart();
+  renderChartLineToggles(); renderChart();
+}
+
+/* Форма ручного ввода данных графика — привязана к currentMonth, тому же месяцу,
+   что и вся остальная вкладка «Сводка по месяцам» */
+function renderChartDataForm(){
+  const el = document.getElementById('chartDataForm');
+  const existing = chartDataForMonth(currentMonth);
+  el.innerHTML = `
+    <p style="font-size:12px;color:var(--ink-light);margin:0 0 8px;">
+      Доходы и расходы для графика вносятся вручную — укажите итоговые суммы за ${currentMonth.format('MMMM YYYY')} и нажмите «Сохранить».
+      Чтобы заполнить другой месяц, переключитесь на него кнопками ‹ › в начале вкладки.
+    </p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+      <div class="field" style="margin:0;"><label>Доходы за месяц (₽)</label><input type="number" id="chartIncomeInput" value="${existing?existing.income:0}"></div>
+      <div class="field" style="margin:0;"><label>Расходы за месяц (₽)</label><input type="number" id="chartExpenseInput" value="${existing?existing.expense:0}"></div>
+      <button class="btn sm accent" onclick="saveChartDataEntry()">Сохранить за ${currentMonth.format('MMMM')}</button>
+      ${existing?`<button class="btn sm ghost" onclick="deleteChartDataEntry('${existing.id}')">Удалить данные за этот месяц</button>`:''}
+    </div>
+  `;
+}
+async function saveChartDataEntry(){
+  const month = currentMonth.format('YYYY-MM');
+  const income = parseFloat(document.getElementById('chartIncomeInput').value)||0;
+  const expense = parseFloat(document.getElementById('chartExpenseInput').value)||0;
+  const existing = chartDataForMonth(currentMonth);
+  let error;
+  if(existing){ ({ error } = await sb.from('chart_data').update({income, expense}).eq('id', existing.id)); }
+  else { ({ error } = await sb.from('chart_data').insert({month, income, expense})); }
+  if(error){
+    if(error.code==='42P01' || /does not exist/i.test(error.message)){ toast('Таблица «chart_data» ещё не создана в Supabase — выполните SQL-миграцию'); }
+    else toast('Ошибка: '+error.message);
+    return;
+  }
+  toast('Сохранено');
+  await fetchChartData();
+  renderChartDataForm();
+  await renderChart();
+}
+async function deleteChartDataEntry(id){
+  if(!confirm('Удалить данные графика за этот месяц?')) return;
+  const { error } = await sb.from('chart_data').delete().eq('id', id);
+  if(error){ toast('Ошибка: '+error.message); return; }
+  await fetchChartData();
+  renderChartDataForm();
+  await renderChart();
 }
 
 async function renderChart(){
   const months = [];
   for(let i=11;i>=0;i--) months.push(currentMonth.subtract(i,'month'));
-  const rangeFrom = months[0].startOf('month').format('YYYY-MM-DD');
-  const rangeTo = months[months.length-1].endOf('month').format('YYYY-MM-DD');
-  await fetchLessonsForAllRange(rangeFrom, rangeTo);
-  await fetchPaymentsForRange(rangeFrom, rangeTo);
 
   const incomeData = [], expenseData = [];
   months.forEach(m=>{
-    let income=0, expense=0;
-    cache.students.forEach(s=>{
-      if(s.group_id) return; // групповые ученики считаются через группу ниже
-      if(!activeTeacherFilters.has(s.teacher_id)) return;
-      const stats = studentMonthStats(s, m);
-      income += stats.revenueFact; expense += stats.salary;
-    });
-    cache.groups.forEach(g=>{
-      if(!activeTeacherFilters.has(g.teacher_id)) return;
-      const gStats = groupMonthStats(g, m);
-      income += gStats.revenueFact; expense += gStats.salary;
-    });
-    income += monthlyEquivalentTotal(incomesCache, m);
-    expense += monthlyEquivalentTotal(expensesCache, m);
-    incomeData.push(income); expenseData.push(expense);
+    const row = chartDataForMonth(m);
+    incomeData.push(row ? (row.income||0) : 0);
+    expenseData.push(row ? (row.expense||0) : 0);
   });
-
-  // восстанавливаем кэш занятий/оплат к текущему выбранному месяцу
-  const from = currentMonth.startOf('month').format('YYYY-MM-DD');
-  const to = currentMonth.endOf('month').format('YYYY-MM-DD');
-  await fetchLessonsForAllRange(from, to);
-  await fetchPaymentsForRange(from, to);
 
   const ctx = document.getElementById('incomeExpenseChart');
   if(chartInstance) chartInstance.destroy();
